@@ -330,6 +330,8 @@ func explainEnrollError(err error) error {
 		return errors.New("ce jeton a déjà servi : générez une nouvelle commande dans l'admin Network")
 	case client.IsCode(err, "token_invalid"):
 		return errors.New("jeton inconnu : vérifiez la commande copiée depuis l'admin Network")
+	case client.IsCode(err, "monitoring_not_installed"):
+		return errors.New("l'intégration Monitoring n'est pas installée pour cette organisation : installez-la depuis la Marketplace de Network, puis relancez la même commande")
 	case client.IsCode(err, "agent_quota_reached"):
 		return errors.New("la limite d'agents de l'organisation est atteinte")
 	}

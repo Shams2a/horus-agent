@@ -163,8 +163,10 @@ Erreurs des deux points d'accès :
 | 401 | `token_invalid` | jeton inconnu |
 | 401 | `token_expired` | jeton expiré |
 | 401 | `token_used` | jeton déjà consommé (uniquement sur `enroll`) |
+| 403 | `monitoring_not_installed` | l'organisation n'a pas installé l'intégration Monitoring de la Marketplace (le jeton n'est pas consommé) |
 | 403 | `agent_quota_reached` | limite d'agents du plan atteinte |
 | 403 | `project_not_allowed` | `project_id` absent de la liste autorisée |
+| 503 | `service_unavailable` | Network ne peut pas vérifier l'intégration pour le moment, réessayer plus tard |
 | 409 | `replace_mismatch` | `replace_agent_id` ne correspond pas au même `machine_hash` ou à la même organisation |
 
 ## 4. Envoi des mesures et signal de vie
