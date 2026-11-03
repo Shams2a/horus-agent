@@ -152,7 +152,7 @@ func TestFacts(t *testing.T) {
 }
 
 func TestClassifyVirt(t *testing.T) {
-	cases := map[string]string{"none": "physical", "kvm": "vm", "vmware": "vm", "lxc": "lxc", "docker": "container", "": ""}
+	cases := map[string]string{"none": "physical", "kvm": "vm", "vmware": "vm", "wsl": "vm", "lxc": "lxc", "docker": "container", "": ""}
 	for in, want := range cases {
 		if got := classifyVirt(in); got != want {
 			t.Errorf("classifyVirt(%q) = %q, attendu %q", in, got, want)

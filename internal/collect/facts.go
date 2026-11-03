@@ -128,8 +128,11 @@ func classifyVirt(v string) string {
 		return "physical"
 	case "lxc", "lxc-libvirt":
 		return "lxc"
-	case "docker", "podman", "rkt", "systemd-nspawn", "openvz", "container-other", "wsl", "proot", "pouch":
+	case "docker", "podman", "rkt", "systemd-nspawn", "openvz", "container-other", "proot", "pouch":
 		return "container"
+	case "wsl":
+		// WSL 2 tourne dans une vraie machine virtuelle Hyper-V.
+		return "vm"
 	}
 	return "vm"
 }

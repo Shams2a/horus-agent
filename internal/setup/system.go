@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"context"
 	_ "embed"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"os/user"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Shams2a/horus-agent/internal/config"
 )
@@ -28,8 +30,17 @@ func hasSystemd() bool {
 	return err == nil
 }
 
+// commandTimeout borne chaque commande système : l'installation ne doit
+// jamais rester figée sans rien afficher.
+const commandTimeout = 60 * time.Second
+
 func run(name string, args ...string) error {
-	out, err := exec.Command(name, args...).CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("%s %s : pas de réponse après %s", name, strings.Join(args, " "), commandTimeout)
+	}
 	if err != nil {
 		return fmt.Errorf("%s %s : %v (%s)", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
@@ -89,7 +100,13 @@ func installService() error {
 	if err := run("systemctl", "daemon-reload"); err != nil {
 		return err
 	}
-	return run("systemctl", "enable", "--now", config.ServiceName)
+	if err := run("systemctl", "enable", config.ServiceName); err != nil {
+		return err
+	}
+	// --no-block : si la machine n'a pas fini de démarrer (attente du réseau,
+	// premier démarrage…), systemd lancera l'agent dès que possible au lieu de
+	// bloquer l'installation jusque-là. Le premier signal est déjà parti.
+	return run("systemctl", "start", "--no-block", config.ServiceName)
 }
 
 func stopService() {
@@ -102,7 +119,7 @@ func restartService() error {
 	if !hasSystemd() {
 		return nil
 	}
-	return run("systemctl", "restart", config.ServiceName)
+	return run("systemctl", "restart", "--no-block", config.ServiceName)
 }
 
 func serviceState() string {
