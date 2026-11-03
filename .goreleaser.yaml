@@ -1,0 +1,50 @@
+# Publication des Releases GitHub (voir docs/publication.md).
+version: 2
+
+project_name: horus-agent
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: horus-agent
+    main: ./cmd/horus-agent
+    binary: horus-agent
+    env:
+      - CGO_ENABLED=0
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X github.com/Shams2a/horus-agent/internal/version.Version={{ .Version }}
+
+archives:
+  - formats: [tar.gz]
+    name_template: "horus-agent_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - docs/protocole.md
+
+checksum:
+  name_template: SHA256SUMS
+  algorithm: sha256
+
+# Signature Ed25519 de SHA256SUMS, au format attendu par l'agent :
+# 64 octets bruts encodés en base64 standard, dans SHA256SUMS.sig.
+signs:
+  - id: sha256sums
+    artifacts: checksum
+    signature: "${artifact}.sig"
+    cmd: sh
+    args:
+      - -c
+      - openssl pkeyutl -sign -inkey "$HORUS_AGENT_SIGNING_KEY_FILE" -rawin -in "${artifact}" | base64 -w0 > "${signature}"
+
+release:
+  draft: false
+  prerelease: auto
+
+changelog:
+  use: github-native

@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Préparer la clé de signature
+        env:
+          HORUS_AGENT_SIGNING_KEY: ${{ secrets.HORUS_AGENT_SIGNING_KEY }}
+        run: |
+          if [ -z "$HORUS_AGENT_SIGNING_KEY" ]; then
+            echo "::error::Le secret HORUS_AGENT_SIGNING_KEY est absent."
+            exit 1
+          fi
+          key="$RUNNER_TEMP/signing_key.pem"
+          printf '%s\n' "$HORUS_AGENT_SIGNING_KEY" > "$key"
+          chmod 600 "$key"
+          echo "HORUS_AGENT_SIGNING_KEY_FILE=$key" >> "$GITHUB_ENV"
+
+      # Refuse de publier si le secret ne correspond pas à la clé publique
+      # intégrée au binaire : les agents rejetteraient la mise à jour.
+      - name: Contrôler la clé de signature
+        run: |
+          printf 'controle' > "$RUNNER_TEMP/controle.txt"
+          openssl pkeyutl -sign -inkey "$HORUS_AGENT_SIGNING_KEY_FILE" -rawin \
+            -in "$RUNNER_TEMP/controle.txt" | base64 -w0 > "$RUNNER_TEMP/controle.sig"
+          scripts/verify-signature.sh "$RUNNER_TEMP/controle.txt" "$RUNNER_TEMP/controle.sig"
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Vérifier la signature publiée
+        run: scripts/verify-signature.sh dist/SHA256SUMS dist/SHA256SUMS.sig
+
+      - name: Effacer la clé
+        if: always()
+        run: rm -f "$RUNNER_TEMP/signing_key.pem"
