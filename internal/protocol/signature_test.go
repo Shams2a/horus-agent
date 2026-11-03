@@ -56,12 +56,16 @@ func TestVerifyRefuseUneModification(t *testing.T) {
 		t.Fatalf("signature valide refusée : %v", err)
 	}
 	cas := map[string]func() error{
-		"corps":       func() error { return Verify(pub, vectorMethod, vectorPath, vectorTimestamp, []byte(`{}`), sig) },
-		"chemin":      func() error { return Verify(pub, vectorMethod, "/agent/v1/enroll", vectorTimestamp, []byte(vectorBody), sig) },
-		"horodatage":  func() error { return Verify(pub, vectorMethod, vectorPath, vectorTimestamp+1, []byte(vectorBody), sig) },
-		"méthode":     func() error { return Verify(pub, "PUT", vectorPath, vectorTimestamp, []byte(vectorBody), sig) },
-		"pas base64":  func() error { return Verify(pub, vectorMethod, vectorPath, vectorTimestamp, []byte(vectorBody), "@@@") },
-		"trop courte": func() error { return Verify(pub, vectorMethod, vectorPath, vectorTimestamp, []byte(vectorBody), "AAAA") },
+		"corps": func() error { return Verify(pub, vectorMethod, vectorPath, vectorTimestamp, []byte(`{}`), sig) },
+		"chemin": func() error {
+			return Verify(pub, vectorMethod, "/agent/v1/enroll", vectorTimestamp, []byte(vectorBody), sig)
+		},
+		"horodatage": func() error { return Verify(pub, vectorMethod, vectorPath, vectorTimestamp+1, []byte(vectorBody), sig) },
+		"méthode":    func() error { return Verify(pub, "PUT", vectorPath, vectorTimestamp, []byte(vectorBody), sig) },
+		"pas base64": func() error { return Verify(pub, vectorMethod, vectorPath, vectorTimestamp, []byte(vectorBody), "@@@") },
+		"trop courte": func() error {
+			return Verify(pub, vectorMethod, vectorPath, vectorTimestamp, []byte(vectorBody), "AAAA")
+		},
 	}
 	for nom, f := range cas {
 		if err := f(); err != ErrBadSignature {

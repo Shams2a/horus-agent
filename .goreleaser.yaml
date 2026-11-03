@@ -30,6 +30,9 @@ archives:
 checksum:
   name_template: SHA256SUMS
   algorithm: sha256
+  # install.sh figure dans SHA256SUMS, donc couvert par la signature.
+  extra_files:
+    - glob: ./scripts/install.sh
 
 # Signature Ed25519 de SHA256SUMS, au format attendu par l'agent :
 # 64 octets bruts encodés en base64 standard, dans SHA256SUMS.sig.
@@ -43,6 +46,9 @@ signs:
       - openssl pkeyutl -sign -inkey "$HORUS_AGENT_SIGNING_KEY_FILE" -rawin -in "${artifact}" | base64 -w0 > "${signature}"
 
 release:
+  # Publié à la racine de chaque Release : .../releases/latest/download/install.sh
+  extra_files:
+    - glob: ./scripts/install.sh
   draft: false
   prerelease: auto
 

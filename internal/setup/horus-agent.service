@@ -1,0 +1,42 @@
+[Unit]
+Description=Horus Network monitoring agent
+Documentation=https://github.com/Shams2a/horus-agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=horus-agent
+Group=horus-agent
+ExecStart=/opt/horus-agent/bin/horus-agent run
+Restart=always
+RestartSec=10
+# 78 : agent révoqué ou configuration inutilisable, inutile de relancer.
+RestartPreventExitStatus=78
+
+# L'agent ne fait que lire : tout le système est en lecture seule, sauf son
+# binaire (mises à jour) et son dossier d'état.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/horus-agent /var/lib/horus-agent
+# read-only plutôt que yes : l'espace disque de /home doit rester mesurable.
+ProtectHome=read-only
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

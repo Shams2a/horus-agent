@@ -1,0 +1,205 @@
+// Package update installe une version officielle de l'agent (docs/protocole.md § 7).
+//
+// Network ne transmet qu'un numéro de version. L'agent télécharge lui-même
+// l'archive, vérifie la signature de SHA256SUMS avec la clé publique intégrée
+// au binaire, puis l'empreinte de l'archive, et refuse toute version qui
+// n'est pas strictement plus récente.
+package update
+
+import (
+	"archive/tar"
+	"bufio"
+	"bytes"
+	"compress/gzip"
+	"context"
+	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
+
+	"github.com/Shams2a/horus-agent/internal/release"
+	"github.com/Shams2a/horus-agent/internal/semver"
+)
+
+const maxArchiveBytes = 100 << 20
+
+type Updater struct {
+	// DownloadBaseURL : .../releases/download (configuration de l'agent).
+	DownloadBaseURL string
+	BinaryPath      string
+	Current         string
+	PublicKey       ed25519.PublicKey
+	HTTP            *http.Client
+	Arch            string
+}
+
+// New prépare un Updater avec la clé publique intégrée au binaire.
+func New(downloadBaseURL, binaryPath, current string) (*Updater, error) {
+	raw, err := base64.StdEncoding.DecodeString(release.SigningPublicKey)
+	if err != nil || len(raw) != ed25519.PublicKeySize {
+		return nil, errors.New("clé publique de signature invalide dans le binaire")
+	}
+	return &Updater{
+		DownloadBaseURL: strings.TrimRight(downloadBaseURL, "/"),
+		BinaryPath:      binaryPath,
+		Current:         current,
+		PublicKey:       ed25519.PublicKey(raw),
+		HTTP:            &http.Client{Timeout: 5 * time.Minute},
+		Arch:            runtime.GOARCH,
+	}, nil
+}
+
+// Latest lit le numéro de la dernière Release GitHub, en suivant la
+// redirection de .../releases/latest vers .../releases/tag/vX.Y.Z.
+func (u *Updater) Latest(ctx context.Context) (string, error) {
+	latestURL := strings.TrimSuffix(u.DownloadBaseURL, "/download") + "/latest"
+	httpc := *u.HTTP
+	httpc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, latestURL, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := httpc.Do(req)
+	if err != nil {
+		return "", err
+	}
+	resp.Body.Close()
+	tag := path.Base(resp.Header.Get("Location"))
+	version := strings.TrimPrefix(tag, "v")
+	if !semver.Valid(version) {
+		return "", fmt.Errorf("dernière version introuvable (%s)", latestURL)
+	}
+	return version, nil
+}
+
+// Apply installe `version`. Il ne redémarre pas le service : l'appelant s'en charge.
+func (u *Updater) Apply(ctx context.Context, version string) error {
+	version = strings.TrimPrefix(version, "v")
+	if !semver.IsNewer(version, u.Current) {
+		return fmt.Errorf("version %s refusée : elle n'est pas plus récente que %s", version, u.Current)
+	}
+	base := fmt.Sprintf("%s/v%s/", u.DownloadBaseURL, version)
+	archiveName := fmt.Sprintf("horus-agent_%s_linux_%s.tar.gz", version, u.Arch)
+
+	sums, err := u.get(ctx, base+"SHA256SUMS", 1<<20)
+	if err != nil {
+		return err
+	}
+	sig, err := u.get(ctx, base+"SHA256SUMS.sig", 4096)
+	if err != nil {
+		return err
+	}
+	if err := VerifySums(u.PublicKey, sums, sig); err != nil {
+		return err
+	}
+	want, err := expectedHash(sums, archiveName)
+	if err != nil {
+		return err
+	}
+	archive, err := u.get(ctx, base+archiveName, maxArchiveBytes)
+	if err != nil {
+		return err
+	}
+	if got := sha256.Sum256(archive); hex.EncodeToString(got[:]) != want {
+		return errors.New("empreinte de l'archive incorrecte, mise à jour abandonnée")
+	}
+	binary, err := extractBinary(archive)
+	if err != nil {
+		return err
+	}
+	return replace(u.BinaryPath, binary)
+}
+
+// VerifySums vérifie la signature Ed25519 (base64) de SHA256SUMS.
+func VerifySums(pub ed25519.PublicKey, sums, sigFile []byte) error {
+	sig, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(sigFile)))
+	if err != nil || len(sig) != ed25519.SignatureSize || !ed25519.Verify(pub, sums, sig) {
+		return errors.New("signature de SHA256SUMS invalide, mise à jour abandonnée")
+	}
+	return nil
+}
+
+func expectedHash(sums []byte, name string) (string, error) {
+	scanner := bufio.NewScanner(bytes.NewReader(sums))
+	for scanner.Scan() {
+		f := strings.Fields(scanner.Text())
+		if len(f) == 2 && strings.TrimPrefix(f[1], "*") == name {
+			return strings.ToLower(f[0]), nil
+		}
+	}
+	return "", fmt.Errorf("%s absent de SHA256SUMS", name)
+}
+
+func (u *Updater) get(ctx context.Context, url string, limit int64) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := u.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("téléchargement de %s : statut %d", url, resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("%s dépasse la taille attendue", url)
+	}
+	return data, nil
+}
+
+func extractBinary(archive []byte) ([]byte, error) {
+	gz, err := gzip.NewReader(bytes.NewReader(archive))
+	if err != nil {
+		return nil, err
+	}
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return nil, errors.New("binaire horus-agent absent de l'archive")
+		}
+		if err != nil {
+			return nil, err
+		}
+		if hdr.Typeflag == tar.TypeReg && path.Base(hdr.Name) == "horus-agent" {
+			return io.ReadAll(io.LimitReader(tr, maxArchiveBytes))
+		}
+	}
+}
+
+// replace remplace le binaire de façon atomique (même dossier, puis rename).
+func replace(target string, binary []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(target), ".horus-agent-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(binary); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o755); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), target)
+}
