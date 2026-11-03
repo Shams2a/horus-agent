@@ -208,6 +208,9 @@ func Setup(ctx context.Context, opts Options) error {
 		return err
 	}
 	stopService()
+	if err := ensureLayout(uid, gid); err != nil {
+		return err
+	}
 
 	key, err := identity.Generate()
 	if err != nil {
@@ -441,21 +444,34 @@ func Uninstall(ctx context.Context, yes bool, out io.Writer) error {
 		}
 	}
 
-	if cfg, err := config.Load(config.ConfigPath); err == nil {
-		if key, err := identity.Load(config.KeyPath); err == nil {
-			api := client.New(cfg.APIURL)
-			api.AgentID, api.Key = cfg.AgentID, key
-			notifyCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			if err := api.Uninstall(notifyCtx); err != nil {
-				fmt.Fprintf(out, "Network n'a pas pu être prévenu (%v), la désinstallation continue.\n", err)
+	return uninstall(ctx, out, true)
+}
+
+// uninstall supprime tout. notify=false quand l'agent a déjà confirmé la
+// désinstallation auprès de Network (demande venue de Network, § 7 bis).
+func uninstall(ctx context.Context, out io.Writer, notify bool) error {
+	if notify {
+		if cfg, err := config.Load(config.ConfigPath); err == nil {
+			if key, err := identity.Load(config.KeyPath); err == nil {
+				api := client.New(cfg.APIURL)
+				api.AgentID, api.Key = cfg.AgentID, key
+				notifyCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				if err := api.Uninstall(notifyCtx); err != nil {
+					fmt.Fprintf(out, "Network n'a pas pu être prévenu (%v), la désinstallation continue.\n", err)
+				}
+				cancel()
 			}
-			cancel()
 		}
 	}
 
 	if hasSystemd() {
 		_ = run("systemctl", "disable", "--now", config.ServiceName)
-		_ = os.Remove(config.UnitPath)
+		// Le service d'aide peut être celui qui exécute cette désinstallation :
+		// on arrête seulement l'unité path, jamais le service en cours.
+		_ = run("systemctl", "disable", "--now", config.HelperPathName)
+		for _, unit := range []string{config.UnitPath, config.HelperPathUnit, config.HelperServiceUnit} {
+			_ = os.Remove(unit)
+		}
 		_ = run("systemctl", "daemon-reload")
 	}
 	for _, dir := range []string{"/etc/horus-agent", config.StateDir, config.InstallDir} {
@@ -463,9 +479,42 @@ func Uninstall(ctx context.Context, yes bool, out io.Writer) error {
 			fmt.Fprintf(out, "Impossible de supprimer %s : %v\n", dir, err)
 		}
 	}
-	_ = os.Remove("/usr/local/bin/horus-agent")
+	_ = os.Remove(config.AdminLink)
 	_ = run("userdel", config.UserName)
 	fmt.Fprintln(out, "Agent désinstallé.")
+	return nil
+}
+
+// Repair passe une installation au modèle 0.2.0 sans toucher à l'identité de
+// l'agent : binaire root, service d'aide, unités à jour. Lancé par
+// « install.sh --repair », après le téléchargement du binaire vérifié.
+func Repair(out io.Writer) error {
+	if err := requireRoot(); err != nil {
+		return err
+	}
+	if _, err := config.Load(config.ConfigPath); err != nil {
+		return fmt.Errorf("aucune installation à réparer : %w", err)
+	}
+	if _, err := identity.Load(config.KeyPath); err != nil {
+		return fmt.Errorf("clé de l'agent illisible, réinstallez avec une nouvelle commande : %w", err)
+	}
+	uid, gid, err := agentAccount()
+	if err != nil {
+		return err
+	}
+	if err := ensureLayout(uid, gid); err != nil {
+		return err
+	}
+	if !hasSystemd() {
+		return errors.New("systemd est introuvable")
+	}
+	if err := installService(); err != nil {
+		return err
+	}
+	if err := restartService(); err != nil {
+		return err
+	}
+	fmt.Fprintln(out, "Agent réparé : binaire protégé, service d'aide installé, désinstallation à distance possible.")
 	return nil
 }
 

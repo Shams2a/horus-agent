@@ -204,12 +204,14 @@ Réponse `200` :
 {
   "server_time": "2026-11-03T18:42:30Z",
   "report_interval_s": 30,
-  "update": { "version": "1.1.0" }
+  "update": { "version": "1.1.0" },
+  "uninstall": false
 }
 ```
 
 - `report_interval_s` permet à Network de ralentir un agent. L'agent applique la nouvelle valeur, bornée entre 15 et 300 secondes.
 - `update` vaut `null`, sauf si quelqu'un a demandé une mise à jour dans l'admin **et** si l'agent l'autorise (`allow_remote_update`). Il ne contient qu'un numéro de version (voir § 7).
+- `uninstall` vaut `true` quand un admin a demandé la désinstallation depuis Network (voir § 7 bis). Absent : `false`. Network ne le demande qu'aux agents qui annoncent la capacité `remote_uninstall`.
 
 Erreurs :
 
@@ -224,6 +226,8 @@ Erreurs :
 ### `POST /agent/v1/uninstall` (signé)
 
 `horus-agent uninstall` l'envoie avant de tout supprimer. Corps : `{}`. Réponse : `204`. Network marque l'agent comme désinstallé. Un échec réseau ne bloque pas la désinstallation.
+
+L'agent l'envoie aussi pour confirmer une désinstallation demandée depuis Network (§ 7 bis). Network supprime alors l'agent et ses données.
 
 ## 5. Fiche de la machine (`facts`)
 
@@ -242,11 +246,13 @@ Erreurs :
   ],
   "disks": [ { "mount": "/", "fs": "ext4", "total_bytes": 34359738368 } ],
   "collectors": ["system", "systemd"],
-  "allow_remote_update": true
+  "allow_remote_update": true,
+  "capabilities": ["remote_uninstall"]
 }
 ```
 
-- `virtualization` vaut `physical`, `vm`, `lxc`, `container` ou `unknown`.
+- `virtualization` vaut `physical`, `vm`, `lxc`, `container` ou `unknown`. WSL 2 compte comme `vm`.
+- `capabilities` (0.2.0 et suivantes) liste ce que l'installation permet. `remote_uninstall` : le service d'aide root est installé (§ 7 et § 8), la désinstallation peut être demandée depuis Network. Absent : aucune capacité (installations 0.1.x).
 - Les interfaces de boucle locale (`lo`) et les interfaces virtuelles de conteneurs (`veth*`, `docker0`, `br-*`) sont exclues.
 - Les disques retenus sont les systèmes de fichiers réels. Les pseudo-systèmes (`tmpfs`, `overlay`, `proc`, `squashfs`…) sont exclus.
 
@@ -289,20 +295,41 @@ Dans les deux cas, l'agent suit la même procédure :
    - `v<version>/SHA256SUMS`
    - `v<version>/SHA256SUMS.sig` (signature Ed25519 de `SHA256SUMS` : 64 octets en base64 standard)
 3. Il vérifie la signature Ed25519 de `SHA256SUMS` avec la **clé publique intégrée au binaire**, puis l'empreinte de l'archive. Au moindre écart, il abandonne et le journalise.
-4. Il remplace son binaire de façon atomique (`/opt/horus-agent/bin/horus-agent`, qui appartient au compte `horus-agent`) et quitte avec le code 0. systemd le relance avec la nouvelle version.
+4. L'installation dépend de la façon dont l'agent a été installé :
+   - **avec le service d'aide (0.2.0 et suivantes)** : le binaire appartient à root et l'agent ne peut pas le modifier. Il dépose l'archive, `SHA256SUMS`, `SHA256SUMS.sig` et le numéro de version dans `/var/lib/horus-agent/requests/update/`, puis crée `ready`. Le service d'aide, lancé en root par systemd, **revérifie** la signature, l'empreinte et la version avec son propre binaire, installe le nouveau de façon atomique puis relance l'agent. Il ne fait confiance à rien de ce que l'agent a vérifié ;
+   - **sans service d'aide (installations 0.1.x)** : l'agent remplace lui-même son binaire (`/opt/horus-agent/bin/horus-agent`, qui lui appartient) et quitte avec le code 0. systemd le relance avec la nouvelle version.
+
+`horus-agent update`, lancé en root, installe directement : le binaire qui s'exécute appartient à root.
+
+Pour passer une installation 0.1.x au nouveau modèle (binaire root, service d'aide, désinstallation à distance), relancer `install.sh` avec `--repair` : il réinstalle le binaire et les services sans toucher à l'identité de l'agent ni à son placement.
 
 Network ne transmet jamais d'adresse, de script ni de paramètre : seulement un numéro de version. Changer `download_base_url` (passage à un sous-domaine, par exemple) ne permet donc pas d'installer un binaire non signé.
 
 L'installation initiale (`install.sh`) vérifie l'empreinte SHA-256 de l'archive. La confiance initiale repose sur le HTTPS de GitHub, comme pour `cloudflared` ou `tailscale`. La signature protège les mises à jour, qui se font sans humain devant l'écran.
 
+## 7 bis. Désinstallation demandée depuis Network
+
+1. Un admin (`hnetwork.monitoring.manage`) demande la désinstallation dans la fiche de l'agent. Network note la demande, et l'agent passe à l'état `uninstall_requested`.
+2. À son signal de vie suivant, l'agent reçoit `"uninstall": true`.
+3. L'agent confirme par `POST /agent/v1/uninstall`, puis crée `/var/lib/horus-agent/requests/uninstall`.
+4. Le service d'aide, lancé en root, arrête l'agent, puis supprime ses services, ses fichiers et son compte. Il ne lit rien dans le fichier de demande : sa présence suffit.
+5. À la confirmation, Network supprime l'agent, ses mesures et ses liens, ainsi que les nœuds du canvas si l'admin l'a demandé.
+
+Un agent sans service d'aide qui recevrait quand même la demande la confirme, puis s'arrête avec le code 78 : il est neutralisé, mais ses fichiers restent sur la machine.
+
+Comme pour la mise à jour, Network ne transmet aucun paramètre. Au pire, quelqu'un qui contrôlerait Network pourrait désinstaller des agents, jamais exécuter de code sur la machine.
+
 ## 8. Fichiers et codes de sortie
 
 | Chemin | Contenu | Propriétaire |
 |---|---|---|
-| `/opt/horus-agent/bin/horus-agent` | binaire | `horus-agent` |
+| `/opt/horus-agent/bin/horus-agent` | binaire | `root` (0.2.0) ; `horus-agent` pour les installations 0.1.x |
+| `/usr/local/bin/horus-agent` | lien vers le binaire, pour les commandes d'admin | `root` |
 | `/etc/horus-agent/config.json` | `api_url`, `download_base_url`, `agent_id`, `collectors`, options | `root`, lisible par `horus-agent` |
 | `/var/lib/horus-agent/agent.key` | clé privée | `horus-agent`, `0600` |
+| `/var/lib/horus-agent/requests/` | demandes de l'agent au service d'aide (`update/`, `uninstall`) | `horus-agent` |
 | `/etc/systemd/system/horus-agent.service` | service | `root` |
+| `/etc/systemd/system/horus-agent-helper.path` et `.service` | service d'aide : surveille `requests/` et lance `horus-agent helper` en root | `root` |
 
 | Code de sortie | Sens |
 |---|---|
@@ -321,6 +348,7 @@ Network calcule l'état ; ce n'est pas l'agent qui l'envoie. Les seuils sont fix
 | `degraded` | signal récent et au moins une raison ci-dessous |
 | `unreachable` | aucun signal depuis 3 × `report_interval_s` (90 s par défaut) |
 | `revoked` | révoqué depuis l'admin |
+| `uninstall_requested` | désinstallation demandée depuis l'admin, en attente de la confirmation de l'agent |
 | `uninstalled` | `POST /uninstall` reçu |
 
 Raisons de dégradation (codes stables, affichés dans la fiche) :

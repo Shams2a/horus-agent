@@ -1,9 +1,16 @@
 // Package update installe une version officielle de l'agent (docs/protocole.md § 7).
 //
-// Network ne transmet qu'un numéro de version. L'agent télécharge lui-même
-// l'archive, vérifie la signature de SHA256SUMS avec la clé publique intégrée
-// au binaire, puis l'empreinte de l'archive, et refuse toute version qui
-// n'est pas strictement plus récente.
+// Network ne transmet qu'un numéro de version. L'archive est téléchargée
+// depuis les Releases, la signature de SHA256SUMS est vérifiée avec la clé
+// publique intégrée au binaire, puis l'empreinte de l'archive, et toute
+// version qui n'est pas strictement plus récente est refusée.
+//
+// Deux façons d'installer :
+//   - Apply : remplace le binaire directement (root, ou installation 0.1.x
+//     où le binaire appartient à l'agent) ;
+//   - Stage puis InstallStaged : l'agent, sans droits root, dépose la version
+//     dans requests/update ; le service d'aide root la revérifie entièrement
+//     avec son propre binaire avant de l'installer.
 package update
 
 import (
@@ -31,7 +38,21 @@ import (
 	"github.com/Shams2a/horus-agent/internal/semver"
 )
 
-const maxArchiveBytes = 100 << 20
+const (
+	maxArchiveBytes = 100 << 20
+	maxSumsBytes    = 1 << 20
+	maxSigBytes     = 4096
+)
+
+// Fichiers déposés pour le service d'aide.
+const (
+	stagedArchive = "archive.tar.gz"
+	stagedSums    = "SHA256SUMS"
+	stagedSig     = "SHA256SUMS.sig"
+	stagedVersion = "version"
+	// ReadyFile : créé en dernier, c'est lui qui réveille le service d'aide.
+	ReadyFile = "ready"
+)
 
 type Updater struct {
 	// DownloadBaseURL : .../releases/download (configuration de l'agent).
@@ -82,42 +103,140 @@ func (u *Updater) Latest(ctx context.Context) (string, error) {
 	return version, nil
 }
 
-// Apply installe `version`. Il ne redémarre pas le service : l'appelant s'en charge.
-func (u *Updater) Apply(ctx context.Context, version string) error {
+type bundle struct {
+	version            string
+	archive, sums, sig []byte
+}
+
+func (u *Updater) archiveName(version string) string {
+	return fmt.Sprintf("horus-agent_%s_linux_%s.tar.gz", version, u.Arch)
+}
+
+func (u *Updater) download(ctx context.Context, version string) (*bundle, error) {
 	version = strings.TrimPrefix(version, "v")
 	if !semver.IsNewer(version, u.Current) {
-		return fmt.Errorf("version %s refusée : elle n'est pas plus récente que %s", version, u.Current)
+		return nil, fmt.Errorf("version %s refusée : elle n'est pas plus récente que %s", version, u.Current)
 	}
 	base := fmt.Sprintf("%s/v%s/", u.DownloadBaseURL, version)
-	archiveName := fmt.Sprintf("horus-agent_%s_linux_%s.tar.gz", version, u.Arch)
+	b := &bundle{version: version}
+	var err error
+	if b.sums, err = u.get(ctx, base+"SHA256SUMS", maxSumsBytes); err != nil {
+		return nil, err
+	}
+	if b.sig, err = u.get(ctx, base+"SHA256SUMS.sig", maxSigBytes); err != nil {
+		return nil, err
+	}
+	if b.archive, err = u.get(ctx, base+u.archiveName(version), maxArchiveBytes); err != nil {
+		return nil, err
+	}
+	return b, nil
+}
 
-	sums, err := u.get(ctx, base+"SHA256SUMS", 1<<20)
+// verify contrôle la version, la signature et l'empreinte, puis renvoie le
+// binaire extrait de l'archive.
+func (u *Updater) verify(b *bundle) ([]byte, error) {
+	if !semver.IsNewer(b.version, u.Current) {
+		return nil, fmt.Errorf("version %s refusée : elle n'est pas plus récente que %s", b.version, u.Current)
+	}
+	if err := VerifySums(u.PublicKey, b.sums, b.sig); err != nil {
+		return nil, err
+	}
+	want, err := expectedHash(b.sums, u.archiveName(b.version))
+	if err != nil {
+		return nil, err
+	}
+	if got := sha256.Sum256(b.archive); hex.EncodeToString(got[:]) != want {
+		return nil, errors.New("empreinte de l'archive incorrecte, mise à jour abandonnée")
+	}
+	return extractBinary(b.archive)
+}
+
+// Apply télécharge, vérifie et installe `version` à la place du binaire.
+// Il ne redémarre pas le service : l'appelant s'en charge.
+func (u *Updater) Apply(ctx context.Context, version string) error {
+	b, err := u.download(ctx, version)
 	if err != nil {
 		return err
 	}
-	sig, err := u.get(ctx, base+"SHA256SUMS.sig", 4096)
-	if err != nil {
-		return err
-	}
-	if err := VerifySums(u.PublicKey, sums, sig); err != nil {
-		return err
-	}
-	want, err := expectedHash(sums, archiveName)
-	if err != nil {
-		return err
-	}
-	archive, err := u.get(ctx, base+archiveName, maxArchiveBytes)
-	if err != nil {
-		return err
-	}
-	if got := sha256.Sum256(archive); hex.EncodeToString(got[:]) != want {
-		return errors.New("empreinte de l'archive incorrecte, mise à jour abandonnée")
-	}
-	binary, err := extractBinary(archive)
+	binary, err := u.verify(b)
 	if err != nil {
 		return err
 	}
 	return replace(u.BinaryPath, binary)
+}
+
+// Stage télécharge et vérifie `version`, puis la dépose dans dir pour le
+// service d'aide. La vérification ici ne sert qu'à refuser tôt : le service
+// d'aide recommence tout.
+func (u *Updater) Stage(ctx context.Context, version, dir string) error {
+	b, err := u.download(ctx, version)
+	if err != nil {
+		return err
+	}
+	if _, err := u.verify(b); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return err
+	}
+	for name, data := range map[string][]byte{
+		stagedArchive: b.archive,
+		stagedSums:    b.sums,
+		stagedSig:     b.sig,
+		stagedVersion: []byte(b.version + "\n"),
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0o640); err != nil {
+			return err
+		}
+	}
+	return os.WriteFile(filepath.Join(dir, ReadyFile), nil, 0o640)
+}
+
+// InstallStaged installe la version déposée dans dir, après l'avoir
+// entièrement revérifiée. Utilisé par le service d'aide root : dir appartient
+// à l'agent, rien de ce qu'il contient n'est cru sur parole.
+func (u *Updater) InstallStaged(dir string) (string, error) {
+	rawVersion, err := readRegular(filepath.Join(dir, stagedVersion), 64)
+	if err != nil {
+		return "", err
+	}
+	b := &bundle{version: strings.TrimSpace(string(rawVersion))}
+	if !semver.Valid(b.version) {
+		return "", errors.New("numéro de version déposé illisible")
+	}
+	if b.archive, err = readRegular(filepath.Join(dir, stagedArchive), maxArchiveBytes); err != nil {
+		return "", err
+	}
+	if b.sums, err = readRegular(filepath.Join(dir, stagedSums), maxSumsBytes); err != nil {
+		return "", err
+	}
+	if b.sig, err = readRegular(filepath.Join(dir, stagedSig), maxSigBytes); err != nil {
+		return "", err
+	}
+	binary, err := u.verify(b)
+	if err != nil {
+		return "", err
+	}
+	return b.version, replace(u.BinaryPath, binary)
+}
+
+// readRegular lit un fichier ordinaire, en refusant les liens symboliques et
+// les fichiers trop gros.
+func readRegular(name string, limit int64) ([]byte, error) {
+	info, err := os.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s n'est pas un fichier ordinaire", filepath.Base(name))
+	}
+	if info.Size() > limit {
+		return nil, fmt.Errorf("%s dépasse la taille attendue", filepath.Base(name))
+	}
+	return os.ReadFile(name)
 }
 
 // VerifySums vérifie la signature Ed25519 (base64) de SHA256SUMS.
@@ -184,6 +303,8 @@ func extractBinary(archive []byte) ([]byte, error) {
 }
 
 // replace remplace le binaire de façon atomique (même dossier, puis rename).
+// Le nouveau binaire garde le propriétaire de l'ancien : root pour une
+// installation 0.2.0, l'agent pour une installation 0.1.x.
 func replace(target string, binary []byte) error {
 	tmp, err := os.CreateTemp(filepath.Dir(target), ".horus-agent-*")
 	if err != nil {
@@ -199,6 +320,9 @@ func replace(target string, binary []byte) error {
 		return err
 	}
 	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := keepOwner(target, tmp.Name()); err != nil {
 		return err
 	}
 	return os.Rename(tmp.Name(), target)

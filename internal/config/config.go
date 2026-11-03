@@ -21,6 +21,19 @@ const (
 	ServiceName = "horus-agent"
 	UserName    = "horus-agent"
 	MachineID   = "/etc/machine-id"
+
+	// Lien pour les commandes d'admin (sudo horus-agent …).
+	AdminLink = "/usr/local/bin/horus-agent"
+
+	// Demandes de l'agent au service d'aide root (§ 7 et § 7 bis). Le
+	// dossier appartient à l'agent, le service d'aide revérifie tout.
+	RequestsDir      = "/var/lib/horus-agent/requests"
+	UpdateRequestDir = "/var/lib/horus-agent/requests/update"
+	UninstallRequest = "/var/lib/horus-agent/requests/uninstall"
+
+	HelperPathUnit    = "/etc/systemd/system/horus-agent-helper.path"
+	HelperServiceUnit = "/etc/systemd/system/horus-agent-helper.service"
+	HelperPathName    = "horus-agent-helper.path"
 )
 
 // DefaultDownloadBaseURL : Releases GitHub. Écrite dans la configuration

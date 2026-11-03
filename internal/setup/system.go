@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +18,12 @@ import (
 
 //go:embed horus-agent.service
 var unitFile []byte
+
+//go:embed horus-agent-helper.path
+var helperPathFile []byte
+
+//go:embed horus-agent-helper.service
+var helperServiceFile []byte
 
 func requireRoot() error {
 	if os.Geteuid() != 0 {
@@ -93,11 +100,54 @@ func setDockerAccess(enabled bool) error {
 	return nil
 }
 
+// ensureLayout met les fichiers à leur place et à leurs propriétaires
+// (docs/protocole.md § 8). Le binaire appartient à root : l'agent ne peut
+// pas le modifier, et « sudo horus-agent … » n'exécute jamais un fichier que
+// le compte horus-agent aurait pu changer.
+func ensureLayout(uid, gid int) error {
+	binDir := filepath.Dir(config.BinaryPath)
+	for _, dir := range []string{config.InstallDir, binDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+		if err := os.Chown(dir, 0, 0); err != nil {
+			return err
+		}
+	}
+	if _, err := os.Stat(config.BinaryPath); err == nil {
+		if err := os.Chown(config.BinaryPath, 0, 0); err != nil {
+			return err
+		}
+		if err := os.Chmod(config.BinaryPath, 0o755); err != nil {
+			return err
+		}
+	}
+	for _, dir := range []string{config.StateDir, config.RequestsDir} {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			return err
+		}
+		if err := os.Chown(dir, uid, gid); err != nil {
+			return err
+		}
+	}
+	_ = os.Remove(config.AdminLink)
+	return os.Symlink(config.BinaryPath, config.AdminLink)
+}
+
 func installService() error {
-	if err := os.WriteFile(config.UnitPath, unitFile, 0o644); err != nil {
-		return err
+	for path, content := range map[string][]byte{
+		config.UnitPath:          unitFile,
+		config.HelperPathUnit:    helperPathFile,
+		config.HelperServiceUnit: helperServiceFile,
+	} {
+		if err := os.WriteFile(path, content, 0o644); err != nil {
+			return err
+		}
 	}
 	if err := run("systemctl", "daemon-reload"); err != nil {
+		return err
+	}
+	if err := run("systemctl", "enable", "--now", config.HelperPathName); err != nil {
 		return err
 	}
 	if err := run("systemctl", "enable", config.ServiceName); err != nil {

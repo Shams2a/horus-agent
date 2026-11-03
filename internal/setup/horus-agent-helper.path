@@ -1,0 +1,13 @@
+[Unit]
+Description=Horus Network monitoring agent, demandes au service d'aide
+Documentation=https://github.com/Shams2a/horus-agent
+
+[Path]
+# L'agent, sans droits root, dépose ses demandes ici. Le service d'aide ne
+# lit que leur présence ou des fichiers qu'il revérifie (docs/protocole.md § 7).
+PathExists=/var/lib/horus-agent/requests/uninstall
+PathExists=/var/lib/horus-agent/requests/update/ready
+Unit=horus-agent-helper.service
+
+[Install]
+WantedBy=paths.target

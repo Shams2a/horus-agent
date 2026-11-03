@@ -18,6 +18,7 @@ import (
 	"github.com/Shams2a/horus-agent/internal/collect"
 	"github.com/Shams2a/horus-agent/internal/config"
 	"github.com/Shams2a/horus-agent/internal/identity"
+	"github.com/Shams2a/horus-agent/internal/protocol"
 	"github.com/Shams2a/horus-agent/internal/setup"
 	"github.com/Shams2a/horus-agent/internal/update"
 	"github.com/Shams2a/horus-agent/internal/version"
@@ -32,6 +33,7 @@ Usage :
   horus-agent update [version]                       Installe la dernière version, ou celle indiquée
   horus-agent uninstall                              Prévient Network et supprime l'agent
   horus-agent run                                    Lance l'agent (utilisé par le service systemd)
+  horus-agent helper                                 Service d'aide root (utilisé par systemd)
   horus-agent version                                Affiche la version
 
 Ajoutez --help après une commande pour voir ses options.
@@ -67,6 +69,8 @@ func main() {
 		err = cmdUninstall(ctx, args)
 	case "run":
 		os.Exit(cmdRun(ctx))
+	case "helper":
+		err = setup.Helper(ctx, os.Stdout)
 	default:
 		fmt.Fprintf(os.Stderr, "Commande inconnue : %s\n\n%s", cmd, usage)
 		os.Exit(2)
@@ -114,8 +118,12 @@ func cmdSetup(ctx context.Context, args []string) error {
 	fs.Var(&noReplace, "no-replace", "ne pas reprendre l'agent déjà inscrit sur cette machine")
 	fs.BoolVar(&opts.Yes, "yes", false, "ne poser aucune question (valeurs par défaut et options ci-dessus)")
 	fs.BoolVar(&opts.NoService, "no-service", false, "ne pas installer le service systemd (conteneurs sans systemd)")
+	repair := fs.Bool("repair", false, "réparer une installation existante sans la réinscrire (binaire root, service d'aide)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *repair {
+		return setup.Repair(os.Stdout)
 	}
 	if metrics != "" {
 		m, err := setup.ParseMetrics(metrics)
@@ -209,18 +217,42 @@ func cmdRun(ctx context.Context) int {
 	api := client.New(cfg.APIURL)
 	api.AgentID, api.Key = cfg.AgentID, key
 
+	// Avec le service d'aide (installation 0.2.0), le binaire appartient à
+	// root : l'agent dépose les mises à jour et la désinstallation, le service
+	// d'aide les exécute. Sans lui (installation 0.1.x), l'agent remplace son
+	// binaire lui-même et ne peut pas se désinstaller.
+	helper := setup.HelperInstalled()
+	var capabilities []string
+	if helper {
+		capabilities = []string{protocol.CapabilityRemoteUninstall}
+	}
 	runner := &agent.Runner{
-		Config:    cfg,
-		Client:    api,
-		Collector: collect.New(),
-		Version:   version.Version,
-		Log:       log,
-		Update: func(ctx context.Context, target string) error {
+		Config:       cfg,
+		Client:       api,
+		Collector:    collect.New(),
+		Version:      version.Version,
+		Log:          log,
+		Capabilities: capabilities,
+		Update: func(ctx context.Context, target string) (bool, error) {
 			u, err := update.New(cfg.DownloadBaseURL, config.BinaryPath, version.Version)
 			if err != nil {
-				return err
+				return false, err
 			}
-			return u.Apply(ctx, target)
+			if helper {
+				return false, u.Stage(ctx, target, config.UpdateRequestDir)
+			}
+			return true, u.Apply(ctx, target)
+		},
+		Uninstall: func(ctx context.Context) error {
+			// Confirmer d'abord : Network efface alors l'agent de son côté.
+			if err := api.Uninstall(ctx); err != nil {
+				log.Warn("confirmation de la désinstallation impossible", "erreur", err)
+			}
+			if !helper {
+				log.Warn("service d'aide absent : l'agent s'arrête, mais ses fichiers restent. « sudo horus-agent uninstall » les supprime.")
+				return nil
+			}
+			return os.WriteFile(config.UninstallRequest, nil, 0o640)
 		},
 	}
 	log.Info("agent démarré", "version", version.Version, "agent", cfg.AgentID, "collecteurs", cfg.Collectors)
@@ -232,6 +264,9 @@ func cmdRun(ctx context.Context) int {
 	case errors.Is(err, agent.ErrRestart):
 		log.Info("nouvelle version installée, redémarrage")
 		return 0
+	case errors.Is(err, agent.ErrUninstall):
+		log.Info("désinstallation demandée depuis Network : arrêt définitif, le service d'aide supprime l'agent.")
+		return exitDoNotRestart
 	case errors.Is(err, context.Canceled):
 		return 0
 	case err != nil:

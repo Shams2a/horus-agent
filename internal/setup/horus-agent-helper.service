@@ -1,0 +1,9 @@
+[Unit]
+Description=Horus Network monitoring agent, service d'aide (mise à jour, désinstallation)
+Documentation=https://github.com/Shams2a/horus-agent
+
+[Service]
+Type=oneshot
+# Root, avec un binaire qui appartient à root : il installe une mise à jour
+# après l'avoir revérifiée, ou désinstalle l'agent. Rien d'autre.
+ExecStart=/opt/horus-agent/bin/horus-agent helper

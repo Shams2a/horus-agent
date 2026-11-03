@@ -79,7 +79,7 @@ func TestUnitHardening(t *testing.T) {
 		"ExecStart=/opt/horus-agent/bin/horus-agent run",
 		"RestartPreventExitStatus=78",
 		"ProtectSystem=strict",
-		"ReadWritePaths=/opt/horus-agent /var/lib/horus-agent",
+		"ReadWritePaths=/var/lib/horus-agent",
 		"NoNewPrivileges=yes",
 	} {
 		if !strings.Contains(unit, line) {
@@ -103,5 +103,25 @@ func TestRecapProject(t *testing.T) {
 		if got := recapProject(c.replacing, c.id, c.name); got != c.want {
 			t.Errorf("recapProject(%v, %q, %q) = %q, attendu %q", c.replacing, c.id, c.name, got, c.want)
 		}
+	}
+}
+
+func TestHelperUnits(t *testing.T) {
+	path := string(helperPathFile)
+	for _, line := range []string{
+		"PathExists=/var/lib/horus-agent/requests/uninstall",
+		"PathExists=/var/lib/horus-agent/requests/update/ready",
+		"Unit=horus-agent-helper.service",
+	} {
+		if !strings.Contains(path, line) {
+			t.Errorf("unité path : %q manquant", line)
+		}
+	}
+	service := string(helperServiceFile)
+	if !strings.Contains(service, "ExecStart=/opt/horus-agent/bin/horus-agent helper") || strings.Contains(service, "User=") {
+		t.Errorf("le service d'aide doit lancer « horus-agent helper » en root :\n%s", service)
+	}
+	if strings.Contains(string(unitFile), "/opt/horus-agent /var") {
+		t.Error("l'agent ne doit plus pouvoir écrire dans /opt/horus-agent")
 	}
 }

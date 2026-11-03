@@ -166,7 +166,7 @@ func TestRemoteUpdate(t *testing.T) {
 		return http.StatusOK, `{"update":{"version":"1.1.0"}}`
 	})
 	var got string
-	r.Update = func(_ context.Context, v string) error { got = v; return nil }
+	r.Update = func(_ context.Context, v string) (bool, error) { got = v; return true, nil }
 	if err := r.Flush(context.Background()); !errors.Is(err, ErrRestart) || got != "1.1.0" {
 		t.Errorf("erreur = %v, version = %q", err, got)
 	}
@@ -175,6 +175,37 @@ func TestRemoteUpdate(t *testing.T) {
 	got = ""
 	if err := r.Flush(context.Background()); err != nil || got != "" {
 		t.Errorf("mise à jour refusée attendue, erreur = %v, version = %q", err, got)
+	}
+}
+
+func TestStagedUpdateIsNotRepeated(t *testing.T) {
+	r, _ := newRunner(t, func(int, protocol.ReportRequest) (int, string) {
+		return http.StatusOK, `{"update":{"version":"1.1.0"}}`
+	})
+	calls := 0
+	r.Update = func(context.Context, string) (bool, error) { calls++; return false, nil }
+	for range 3 {
+		if err := r.Flush(context.Background()); err != nil {
+			t.Fatalf("une mise à jour déposée ne doit pas arrêter l'agent : %v", err)
+		}
+	}
+	if calls != 1 {
+		t.Errorf("version déposée %d fois, attendu 1", calls)
+	}
+}
+
+func TestUninstallRequest(t *testing.T) {
+	r, net := newRunner(t, func(int, protocol.ReportRequest) (int, string) {
+		return http.StatusOK, `{"uninstall":true}`
+	})
+	r.Capabilities = []string{protocol.CapabilityRemoteUninstall}
+	asked := false
+	r.Uninstall = func(context.Context) error { asked = true; return nil }
+	if err := r.Flush(context.Background()); !errors.Is(err, ErrUninstall) || !asked {
+		t.Errorf("erreur = %v, désinstallation lancée = %v", err, asked)
+	}
+	if caps := net.reports[0].Facts.Capabilities; len(caps) != 1 || caps[0] != "remote_uninstall" {
+		t.Errorf("capacités envoyées = %v", caps)
 	}
 }
 

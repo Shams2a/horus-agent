@@ -4,6 +4,11 @@
 #   curl -fsSL https://github.com/Shams2a/horus-agent/releases/latest/download/install.sh \
 #     | sudo bash -s -- --token hn_enr_… --api-url https://networkapi.…
 #
+# Pour passer une installation existante (0.1.x) au modèle 0.2.0 sans la
+# réinscrire (binaire protégé, service d'aide, désinstallation à distance) :
+#
+#   curl -fsSL …/install.sh | sudo bash -s -- --repair
+#
 # Ce script ne fait que préparer la machine : il vérifie l'environnement,
 # télécharge le binaire, contrôle son empreinte SHA-256, crée le compte
 # horus-agent, puis passe la main à « horus-agent setup » avec les mêmes
@@ -81,11 +86,13 @@ if ! id "$USER_NAME" >/dev/null 2>&1; then
     --shell "$nologin" "$USER_NAME"
 fi
 
-# Le dossier du binaire appartient au compte de l'agent : c'est ce qui lui
-# permet d'installer lui-même une mise à jour signée, sans droits root.
-install -d -m 0755 -o "$USER_NAME" -g "$USER_NAME" "$INSTALL_DIR" "$INSTALL_DIR/bin"
+# Le binaire appartient à root : l'agent ne peut pas le modifier, et
+# « sudo horus-agent … » n'exécute jamais un fichier que le compte
+# horus-agent aurait pu changer. Les mises à jour passent par le service
+# d'aide, qui les revérifie (docs/protocole.md § 7).
+install -d -m 0755 -o root -g root "$INSTALL_DIR" "$INSTALL_DIR/bin"
 install -d -m 0750 -o "$USER_NAME" -g "$USER_NAME" /var/lib/horus-agent
-install -m 0755 -o "$USER_NAME" -g "$USER_NAME" "$tmp/horus-agent" "$INSTALL_DIR/bin/horus-agent"
+install -m 0755 -o root -g root "$tmp/horus-agent" "$INSTALL_DIR/bin/horus-agent"
 ln -sf "$INSTALL_DIR/bin/horus-agent" /usr/local/bin/horus-agent
 
 exec "$INSTALL_DIR/bin/horus-agent" setup --download-base "$RELEASES_URL/download" "$@"

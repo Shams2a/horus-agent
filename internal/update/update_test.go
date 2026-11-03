@@ -135,3 +135,67 @@ func TestEmbeddedKeyIsValid(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestStageThenInstallStaged(t *testing.T) {
+	pub, key, _ := ed25519.GenerateKey(nil)
+	u, bin := newUpdater(t, serve(t, newRelease(t, key, "1.1.0", "nouveau")), pub)
+	dir := filepath.Join(t.TempDir(), "update")
+	if err := u.Stage(context.Background(), "1.1.0", dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ReadyFile)); err != nil {
+		t.Fatal("ready attendu après le dépôt")
+	}
+	if got, _ := os.ReadFile(bin); string(got) != "ancien" {
+		t.Fatal("Stage ne doit pas toucher au binaire")
+	}
+	v, err := u.InstallStaged(dir)
+	if err != nil || v != "1.1.0" {
+		t.Fatalf("InstallStaged = %q, %v", v, err)
+	}
+	if got, _ := os.ReadFile(bin); string(got) != "nouveau" {
+		t.Errorf("binaire = %q", got)
+	}
+}
+
+func TestInstallStagedRechecksEverything(t *testing.T) {
+	pub, key, _ := ed25519.GenerateKey(nil)
+	u, bin := newUpdater(t, serve(t, newRelease(t, key, "1.1.0", "nouveau")), pub)
+
+	stage := func(t *testing.T) string {
+		dir := filepath.Join(t.TempDir(), "update")
+		if err := u.Stage(context.Background(), "1.1.0", dir); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+
+	t.Run("archive modifiée après le dépôt", func(t *testing.T) {
+		dir := stage(t)
+		os.WriteFile(filepath.Join(dir, "archive.tar.gz"), []byte("piégée"), 0o640)
+		if _, err := u.InstallStaged(dir); err == nil {
+			t.Error("archive modifiée acceptée")
+		}
+	})
+	t.Run("version déposée plus ancienne", func(t *testing.T) {
+		dir := stage(t)
+		os.WriteFile(filepath.Join(dir, "version"), []byte("0.9.0\n"), 0o640)
+		if _, err := u.InstallStaged(dir); err == nil {
+			t.Error("version plus ancienne acceptée")
+		}
+	})
+	t.Run("lien symbolique", func(t *testing.T) {
+		dir := stage(t)
+		target := filepath.Join(dir, "SHA256SUMS")
+		os.Rename(target, target+".vrai")
+		if err := os.Symlink(target+".vrai", target); err != nil {
+			t.Skip("liens symboliques indisponibles")
+		}
+		if _, err := u.InstallStaged(dir); err == nil {
+			t.Error("lien symbolique suivi")
+		}
+	})
+	if got, _ := os.ReadFile(bin); string(got) != "ancien" {
+		t.Errorf("le binaire ne doit pas avoir changé : %q", got)
+	}
+}

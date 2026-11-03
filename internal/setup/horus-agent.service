@@ -15,10 +15,11 @@ RestartSec=10
 RestartPreventExitStatus=78
 
 # L'agent ne fait que lire : tout le système est en lecture seule, sauf son
-# binaire (mises à jour) et son dossier d'état.
+# dossier d'état. Son binaire appartient à root : une mise à jour passe par
+# le service d'aide (horus-agent-helper.path).
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=/opt/horus-agent /var/lib/horus-agent
+ReadWritePaths=/var/lib/horus-agent
 # read-only plutôt que yes : l'espace disque de /home doit rester mesurable.
 ProtectHome=read-only
 PrivateDevices=yes

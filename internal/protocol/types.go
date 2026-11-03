@@ -19,6 +19,10 @@ const (
 	CollectorDocker  = "docker"
 )
 
+// CapabilityRemoteUninstall : le service d'aide root est installé, la
+// désinstallation peut être demandée depuis Network (§ 5, § 7 bis).
+const CapabilityRemoteUninstall = "remote_uninstall"
+
 // MaxSamplesPerReport borne un envoi (§ 4).
 const MaxSamplesPerReport = 500
 
@@ -94,6 +98,7 @@ type ReportResponse struct {
 	ServerTime      time.Time    `json:"server_time"`
 	ReportIntervalS int          `json:"report_interval_s"`
 	Update          *UpdateOrder `json:"update"`
+	Uninstall       bool         `json:"uninstall"`
 }
 
 // ErrorBody est le format d'erreur de toutes les routes (§ 1).
@@ -142,6 +147,7 @@ type Facts struct {
 	Disks             []DiskInfo  `json:"disks"`
 	Collectors        []string    `json:"collectors"`
 	AllowRemoteUpdate bool        `json:"allow_remote_update"`
+	Capabilities      []string    `json:"capabilities,omitempty"`
 }
 
 // --- Mesures (§ 6) --------------------------------------------------------

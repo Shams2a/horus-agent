@@ -37,6 +37,11 @@ var ErrRevoked = errors.New("agent révoqué depuis Network")
 // ErrRestart : une mise à jour est installée, le service doit redémarrer.
 var ErrRestart = errors.New("mise à jour installée, redémarrage")
 
+// ErrUninstall : Network a demandé la désinstallation (§ 7 bis). L'agent l'a
+// confirmée et s'arrête pour de bon (code de sortie 78) ; le service d'aide
+// root supprime le reste.
+var ErrUninstall = errors.New("désinstallation demandée depuis Network")
+
 // Collector est le sous-ensemble de collect.Collector utilisé ici.
 type Collector interface {
 	Prime()
@@ -44,23 +49,36 @@ type Collector interface {
 	Facts(ctx context.Context) protocol.Facts
 }
 
-// Updater installe une version demandée par Network.
-type Updater func(ctx context.Context, version string) error
+// Updater installe une version demandée par Network. restart=true : le
+// binaire est remplacé, l'agent doit redémarrer. restart=false : la version
+// est déposée pour le service d'aide root, qui l'installera et relancera
+// l'agent lui-même.
+type Updater func(ctx context.Context, version string) (restart bool, err error)
+
+// Uninstaller confirme une désinstallation demandée et passe la main au
+// service d'aide.
+type Uninstaller func(ctx context.Context) error
 
 type Runner struct {
 	Config    *config.Config
 	Client    *client.Client
 	Collector Collector
 	Update    Updater
-	Version   string
-	Log       *slog.Logger
-	Now       func() time.Time
+	Uninstall Uninstaller
+	// Capabilities annoncées dans la fiche (§ 5), par exemple remote_uninstall.
+	Capabilities []string
+	Version      string
+	Log          *slog.Logger
+	Now          func() time.Time
 
 	buffer      []protocol.Sample
 	batch       int
 	interval    time.Duration
 	factsHash   [32]byte
 	factsSentAt time.Time
+	// Version déjà déposée pour le service d'aide : Network la redemande à
+	// chaque envoi tant que l'agent n'a pas redémarré.
+	stagedVersion string
 }
 
 func (r *Runner) init() {
@@ -140,6 +158,7 @@ func (r *Runner) facts(ctx context.Context) *protocol.Facts {
 	f := r.Collector.Facts(ctx)
 	f.Collectors = r.Config.Collectors
 	f.AllowRemoteUpdate = r.Config.AllowRemoteUpdate
+	f.Capabilities = r.Capabilities
 	raw, _ := json.Marshal(f)
 	hash := sha256.Sum256(raw)
 	if hash == r.factsHash && r.Now().Sub(r.factsSentAt) < FactsMaxAge {
@@ -185,6 +204,9 @@ func (r *Runner) Flush(ctx context.Context) error {
 			facts = nil
 		}
 		r.applyInterval(resp.ReportIntervalS)
+		if resp.Uninstall {
+			return r.applyUninstall(ctx)
+		}
 		if resp.Update != nil && resp.Update.Version != "" {
 			if err := r.applyUpdate(ctx, resp.Update.Version); err != nil {
 				return err
@@ -224,14 +246,31 @@ func (r *Runner) applyInterval(seconds int) {
 }
 
 func (r *Runner) applyUpdate(ctx context.Context, version string) error {
-	if !r.Config.AllowRemoteUpdate || r.Update == nil {
+	if !r.Config.AllowRemoteUpdate || r.Update == nil || version == r.stagedVersion {
 		return nil
 	}
 	r.Log.Info("mise à jour demandée depuis Network", "version", version)
-	if err := r.Update(ctx, version); err != nil {
+	restart, err := r.Update(ctx, version)
+	if err != nil {
 		// Une mise à jour ratée ne doit pas arrêter la surveillance.
 		r.Log.Error("mise à jour impossible", "version", version, "erreur", err)
 		return nil
 	}
-	return ErrRestart
+	if restart {
+		return ErrRestart
+	}
+	r.stagedVersion = version
+	r.Log.Info("mise à jour déposée, le service d'aide l'installe", "version", version)
+	return nil
+}
+
+func (r *Runner) applyUninstall(ctx context.Context) error {
+	if r.Uninstall == nil {
+		return ErrUninstall
+	}
+	if err := r.Uninstall(ctx); err != nil {
+		r.Log.Error("désinstallation demandée, mais impossible de la lancer", "erreur", err)
+		return nil
+	}
+	return ErrUninstall
 }
