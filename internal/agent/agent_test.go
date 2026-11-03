@@ -197,3 +197,18 @@ func TestBufferIsBounded(t *testing.T) {
 		t.Errorf("tampon = %d, première = %d", len(r.buffer), r.buffer[0].TS.Unix())
 	}
 }
+
+func TestBackoffIsCappedAtOneMinute(t *testing.T) {
+	var got []time.Duration
+	d := time.Duration(0)
+	for range 7 {
+		d = nextBackoff(d)
+		got = append(got, d)
+	}
+	want := []time.Duration{5 * time.Second, 10 * time.Second, 20 * time.Second, 40 * time.Second, time.Minute, time.Minute, time.Minute}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("attentes = %v, attendu %v", got, want)
+		}
+	}
+}

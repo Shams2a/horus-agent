@@ -219,7 +219,7 @@ Erreurs :
 | 401 | `signature_invalid` | il journalise et réessaie avec un délai croissant. Il ne relance pas l'inscription tout seul |
 | 410 | `agent_revoked` | il arrête d'envoyer, journalise « agent révoqué depuis Network » et quitte avec le code 78, qui empêche systemd de le relancer (§ 8) |
 | 413 | `payload_too_large` | il divise le paquet et réessaie |
-| 429 ou 5xx | — | il réessaie avec un délai croissant (5 s, 10 s, 20 s… jusqu'à 5 min), en continuant de mettre en tampon |
+| 429 ou 5xx | — | il réessaie avec un délai croissant (5 s, 10 s, 20 s, 40 s, puis toutes les minutes), en continuant de mettre en tampon |
 
 ### `POST /agent/v1/uninstall` (signé)
 

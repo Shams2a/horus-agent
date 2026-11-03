@@ -168,6 +168,7 @@ func Setup(ctx context.Context, opts Options) error {
 	if err != nil {
 		return err
 	}
+	projectName = recapProject(replaceID != "", projectID, projectName)
 
 	multi := false
 	if opts.MultiProject != nil {
@@ -320,6 +321,20 @@ func chooseProject(p *Prompter, preview *protocol.PreviewResponse, opts Options)
 	}
 	pr := preview.Projects[index-1]
 	return pr.ID, pr.Name, nil
+}
+
+// recapProject : en reprenant un agent existant, ses placements sur les
+// canvas sont conservés. Le récapitulatif ne doit pas laisser croire le
+// contraire avec « à placer plus tard ».
+func recapProject(replacing bool, projectID, projectName string) string {
+	switch {
+	case !replacing:
+		return projectName
+	case projectID == "":
+		return "placement conservé"
+	default:
+		return projectName + " (en plus des placements existants)"
+	}
 }
 
 func explainEnrollError(err error) error {

@@ -25,7 +25,9 @@ const (
 	MaxBuffered  = 24 * 60
 	FactsMaxAge  = time.Hour
 	backoffStart = 5 * time.Second
-	backoffMax   = 5 * time.Minute
+	// Une minute au plus : au retour du réseau, la machine ne doit pas rester
+	// affichée injoignable plusieurs minutes. 0.1.0 et 0.1.1 allaient jusqu'à 5 min.
+	backoffMax = time.Minute
 )
 
 // ErrRevoked : Network a révoqué l'agent. Le service doit s'arrêter pour de

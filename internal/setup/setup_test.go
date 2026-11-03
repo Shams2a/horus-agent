@@ -87,3 +87,21 @@ func TestUnitHardening(t *testing.T) {
 		}
 	}
 }
+
+func TestRecapProject(t *testing.T) {
+	cases := []struct {
+		replacing bool
+		id, name  string
+		want      string
+	}{
+		{false, "", "à placer plus tard", "à placer plus tard"},
+		{false, "p1", "Infra", "Infra"},
+		{true, "", "à placer plus tard", "placement conservé"},
+		{true, "p1", "Infra", "Infra (en plus des placements existants)"},
+	}
+	for _, c := range cases {
+		if got := recapProject(c.replacing, c.id, c.name); got != c.want {
+			t.Errorf("recapProject(%v, %q, %q) = %q, attendu %q", c.replacing, c.id, c.name, got, c.want)
+		}
+	}
+}
