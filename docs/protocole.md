@@ -13,7 +13,7 @@ Le cadrage produit vit dans la carte « Monitoring » du board « Fonctionnalit�
 
 | Élément | Valeur |
 |---|---|
-| Adresse de base | `https://networkapi.<domaine>/agent/v1`, écrite dans la configuration de l'agent (`api_url`) |
+| Adresse de base | `https://networkapi.<domaine>/agent/v1`. La commande d'installation la fournit (`--api-url https://networkapi.<domaine>`), puis l'agent la garde dans sa configuration (`api_url`) |
 | Format | JSON en UTF-8, `Content-Type: application/json` |
 | Dates | RFC 3339 en UTC, par exemple `2026-11-03T18:42:00Z` |
 | Tailles | octets (`*_bytes`), débits en octets par seconde (`*_bps`) |
@@ -314,6 +314,7 @@ Network calcule l'état ; ce n'est pas l'agent qui l'envoie. Les seuils sont fix
 
 | État | Condition |
 |---|---|
+| `pending` | inscrit, aucun signal reçu pour l'instant |
 | `online` | signal reçu il y a moins de 3 × `report_interval_s` et aucune raison de dégradation |
 | `degraded` | signal récent et au moins une raison ci-dessous |
 | `unreachable` | aucun signal depuis 3 × `report_interval_s` (90 s par défaut) |
