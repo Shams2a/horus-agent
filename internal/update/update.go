@@ -32,6 +32,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Shams2a/horus-agent/internal/release"
@@ -225,8 +226,18 @@ func (u *Updater) InstallStaged(dir string) (string, error) {
 
 // readRegular lit un fichier ordinaire, en refusant les liens symboliques et
 // les fichiers trop gros.
+//
+// Le fichier est ouvert sans suivre de lien (O_NOFOLLOW) et sans bloquer
+// (O_NONBLOCK, pour un tube), puis vérifié sur le descripteur ouvert : le
+// dossier appartient à l'agent, qui pourrait remplacer le fichier entre une
+// vérification et la lecture. La lecture reste bornée quoi qu'il arrive.
 func readRegular(name string, limit int64) ([]byte, error) {
-	info, err := os.Lstat(name)
+	f, err := os.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
@@ -236,7 +247,14 @@ func readRegular(name string, limit int64) ([]byte, error) {
 	if info.Size() > limit {
 		return nil, fmt.Errorf("%s dépasse la taille attendue", filepath.Base(name))
 	}
-	return os.ReadFile(name)
+	raw, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) > limit {
+		return nil, fmt.Errorf("%s dépasse la taille attendue", filepath.Base(name))
+	}
+	return raw, nil
 }
 
 // VerifySums vérifie la signature Ed25519 (base64) de SHA256SUMS.

@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/Shams2a/horus-agent/internal/config"
@@ -58,5 +59,20 @@ func Helper(ctx context.Context, out io.Writer) error {
 		return fmt.Errorf("mise à jour déposée refusée : %w", err)
 	}
 	fmt.Fprintf(out, "horus-agent %s installé, redémarrage de l'agent.\n", installed)
-	return restartService()
+	return RefreshInstall(out)
+}
+
+// RefreshInstall lance le nouveau binaire avec « setup --repair » après une
+// mise à jour : il réécrit les unités (les siennes, pas celles de l'ancienne
+// version) et redémarre l'agent. Une correction d'unité arrive ainsi avec
+// la mise à jour, sans --repair à la main. En cas d'échec, l'agent redémarre
+// quand même avec les anciennes unités, et Network l'affiche « À réparer ».
+func RefreshInstall(out io.Writer) error {
+	cmd := exec.Command(config.BinaryPath, "setup", "--repair")
+	cmd.Stdout, cmd.Stderr = out, out
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(out, "Réécriture des unités impossible (%v), redémarrage simple.\n", err)
+		return restartService()
+	}
+	return nil
 }

@@ -73,8 +73,9 @@ Pour une requête sans corps, on prend le sha256 de la chaîne vide.
 Network refuse la requête (`401 signature_invalid`) si :
 
 - la signature ne correspond pas à la clé publique de l'agent ;
-- l'horodatage s'écarte de plus de 5 minutes de l'heure du serveur ;
 - l'horodatage n'est pas strictement supérieur au dernier accepté pour cet agent (protection contre le rejeu). L'agent garantit cette croissance en mémoire : `ts = max(maintenant, dernier_ts + 1)`.
+
+Si la signature est valide mais que l'horodatage s'écarte de plus de 5 minutes de l'heure du serveur, Network répond `401 clock_skew` avec son heure : `{"error": {"code": "clock_skew", "message": "…", "server_time_ms": 1761631920000}}`. Depuis 0.3.1, l'agent en déduit l'écart, corrige ses horodatages (signature et mesures) et renvoie aussitôt la requête. Il refuse un écart de plus de 30 jours, journalise l'écart et l'indique dans sa fiche (`clock_offset_s`, § 5). Une signature invalide ne donne jamais l'heure du serveur.
 
 Un vecteur de test se trouve en annexe A. Les deux implémentations doivent le valider.
 
@@ -219,8 +220,10 @@ Erreurs :
 |---|---|---|
 | 400 | `invalid_request` | il journalise, abandonne cet envoi et ses mesures, et continue |
 | 401 | `signature_invalid` | il journalise et réessaie avec un délai croissant. Il ne relance pas l'inscription tout seul |
+| 401 | `clock_skew` | il corrige son horloge d'après `server_time_ms` et renvoie une fois (§ 2) |
 | 410 | `agent_revoked` | il arrête d'envoyer, journalise « agent révoqué depuis Network » et quitte avec le code 78, qui empêche systemd de le relancer (§ 8) |
 | 413 | `payload_too_large` | il divise le paquet et réessaie |
+| 429 | `rate_limited` | plus de 30 envois en une minute pour cet agent (`Retry-After: 30`). Il réessaie comme pour un 5xx |
 | 429 ou 5xx | — | il réessaie avec un délai croissant (5 s, 10 s, 20 s, 40 s, puis toutes les minutes), en continuant de mettre en tampon |
 
 ### `POST /agent/v1/uninstall` (signé)
@@ -254,6 +257,7 @@ L'agent l'envoie aussi pour confirmer une désinstallation demandée depuis Netw
 
 - `virtualization` vaut `physical`, `vm`, `lxc`, `container` ou `unknown`. WSL 2 compte comme `vm`.
 - `capabilities` (0.2.0 et suivantes) liste ce que l'installation permet. `remote_uninstall` : le service d'aide root est installé (§ 7 et § 8), la désinstallation peut être demandée depuis Network. Absent : aucune capacité (installations 0.1.x).
+- `clock_offset_s` (0.3.1 et suivantes) : écart corrigé entre l'horloge de la machine et celle de Network, en secondes (positif : la machine retarde). Absent si aucun écart n'a été corrigé.
 - `repair` (0.3.0 et suivantes) liste ce que `install.sh --repair` corrigerait sur la machine ; liste vide si rien. Codes : `binary_writable` (binaire modifiable par le compte de l'agent), `helper_missing` (service d'aide absent), `lxc_unit_missing` (complément LXC absent, l'agent mesure l'hôte), `docker_group` (compte de l'agent dans le groupe `docker`, équivalent à root), `docker_reader_missing` (collecteur `docker` coché sans le service de lecture Docker). Network affiche « À réparer » quand la liste n'est pas vide. Absent à l'inscription et chez les agents plus anciens : Network considère alors à réparer une 0.2.x sans `remote_uninstall`.
 - Les interfaces de boucle locale (`lo`) et les interfaces virtuelles de conteneurs (`veth*`, `docker0`, `br-*`) sont exclues.
 - Les disques retenus sont les systèmes de fichiers réels. Les pseudo-systèmes (`tmpfs`, `overlay`, `proc`, `squashfs`…) sont exclus.
@@ -304,6 +308,8 @@ Dans les deux cas, l'agent suit la même procédure :
    - **sans service d'aide (installations 0.1.x)** : l'agent remplace lui-même son binaire (`/opt/horus-agent/bin/horus-agent`, qui lui appartient) et quitte avec le code 0. systemd le relance avec la nouvelle version.
 
 `horus-agent update`, lancé en root, installe directement : le binaire qui s'exécute appartient à root.
+
+Depuis 0.3.1, après l'installation (service d'aide ou `horus-agent update`), le **nouveau** binaire est lancé avec `setup --repair` : il réécrit les unités systemd de sa version (complément LXC, lecture Docker…), retire le compte du groupe `docker` s'il y est encore, puis redémarre l'agent. Une correction d'unité arrive ainsi avec la mise à jour. Si cette étape échoue, l'agent redémarre avec les anciennes unités et le signale dans `repair` (§ 5). Le service d'aide lit les fichiers déposés sans suivre de lien et avec une taille bornée.
 
 Pour passer une installation 0.1.x au nouveau modèle (binaire root, service d'aide, désinstallation à distance), relancer `install.sh` avec `--repair` : il réinstalle le binaire et les services sans toucher à l'identité de l'agent ni à son placement.
 

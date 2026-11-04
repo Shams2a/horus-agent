@@ -23,9 +23,10 @@ import (
 
 // APIError est une réponse d'erreur de Network, avec son code stable.
 type APIError struct {
-	Status  int
-	Code    string
-	Message string
+	Status       int
+	Code         string
+	Message      string
+	ServerTimeMS int64
 }
 
 func (e *APIError) Error() string {
@@ -61,6 +62,19 @@ type Client struct {
 
 	mu     sync.Mutex
 	lastTS int64
+	// offset : correction d'horloge apprise de Network (clock_skew).
+	offset time.Duration
+}
+
+// maxClockOffset borne la correction acceptée : au-delà, l'horloge est trop
+// fausse pour qu'on la rattrape sans risque.
+const maxClockOffset = 30 * 24 * time.Hour
+
+// Offset renvoie la correction d'horloge en cours (0 si l'horloge est juste).
+func (c *Client) Offset() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.offset
 }
 
 // New prépare un client. Le transport par défaut respecte HTTPS_PROXY et NO_PROXY.
@@ -76,7 +90,7 @@ func New(baseURL string) *Client {
 func (c *Client) nextTimestamp() int64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	ts := c.Now().UnixMilli()
+	ts := c.Now().Add(c.offset).UnixMilli()
 	if ts <= c.lastTS {
 		ts = c.lastTS + 1
 	}
@@ -85,6 +99,25 @@ func (c *Client) nextTimestamp() int64 {
 }
 
 func (c *Client) post(ctx context.Context, path string, in, out any, signed bool) error {
+	err := c.send(ctx, path, in, out, signed)
+	// Horloge trop décalée : Network renvoie son heure. On corrige et on
+	// renvoie une fois, avec un horodatage et une signature refaits.
+	var apiErr *APIError
+	if signed && errors.As(err, &apiErr) && apiErr.Code == protocol.CodeClockSkew && apiErr.ServerTimeMS > 0 {
+		offset := time.UnixMilli(apiErr.ServerTimeMS).Sub(c.Now())
+		if offset.Abs() > maxClockOffset {
+			return err
+		}
+		c.mu.Lock()
+		c.offset = offset
+		c.lastTS = 0
+		c.mu.Unlock()
+		return c.send(ctx, path, in, out, signed)
+	}
+	return err
+}
+
+func (c *Client) send(ctx context.Context, path string, in, out any, signed bool) error {
 	body, err := json.Marshal(in)
 	if err != nil {
 		return err
@@ -124,6 +157,7 @@ func (c *Client) post(ctx context.Context, path string, in, out any, signed bool
 		var eb protocol.ErrorBody
 		if json.Unmarshal(raw, &eb) == nil {
 			apiErr.Code, apiErr.Message = eb.Error.Code, eb.Error.Message
+			apiErr.ServerTimeMS = eb.Error.ServerTimeMS
 		}
 		return apiErr
 	}

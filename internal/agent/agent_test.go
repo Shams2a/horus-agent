@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -258,5 +259,54 @@ func TestBackoffIsCappedAtOneMinute(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("attentes = %v, attendu %v", got, want)
 		}
+	}
+}
+
+// Horloge de la machine en retard d'une heure : Network refuse avec son
+// heure, l'agent corrige et renvoie aussitôt, puis date ses mesures à
+// l'heure de Network et signale l'écart dans sa fiche.
+func TestClockSkewIsCorrected(t *testing.T) {
+	serverTime := time.Now().Add(time.Hour)
+	r, net := newRunner(t, func(n int, _ protocol.ReportRequest) (int, string) {
+		if n == 1 {
+			return http.StatusUnauthorized, fmt.Sprintf(
+				`{"error":{"code":"clock_skew","message":"horloge","server_time_ms":%d}}`, serverTime.UnixMilli())
+		}
+		return http.StatusOK, `{"report_interval_s":30}`
+	})
+	r.collect(context.Background())
+	if err := r.Flush(context.Background()); err != nil {
+		t.Fatalf("erreur = %v", err)
+	}
+	if off := r.Client.Offset(); (off - time.Hour).Abs() > 5*time.Second {
+		t.Fatalf("correction = %s, attendu 1 h", off)
+	}
+	if len(net.reports) != 2 {
+		t.Fatalf("envois = %d, attendu 2 (refus puis renvoi)", len(net.reports))
+	}
+
+	r.factsHash = [32]byte{}
+	r.collect(context.Background())
+	r.Flush(context.Background())
+	last := net.reports[len(net.reports)-1]
+	if last.Facts == nil || (last.Facts.ClockOffsetS < 3595 || last.Facts.ClockOffsetS > 3605) {
+		t.Errorf("écart dans la fiche = %+v", last.Facts)
+	}
+	if got := last.Samples[0].TS; got.Before(time.Unix(3600, 0)) {
+		t.Errorf("mesure datée %s, attendu décalée d'une heure", got)
+	}
+}
+
+// Un écart absurde n'est pas rattrapé.
+func TestClockSkewBeyondLimitIsNotApplied(t *testing.T) {
+	r, net := newRunner(t, func(int, protocol.ReportRequest) (int, string) {
+		return http.StatusUnauthorized, fmt.Sprintf(
+			`{"error":{"code":"clock_skew","message":"horloge","server_time_ms":%d}}`, time.Now().AddDate(1, 0, 0).UnixMilli())
+	})
+	if err := r.Flush(context.Background()); err == nil {
+		t.Fatal("erreur attendue")
+	}
+	if r.Client.Offset() != 0 || len(net.reports) != 1 {
+		t.Errorf("correction = %s, envois = %d", r.Client.Offset(), len(net.reports))
 	}
 }

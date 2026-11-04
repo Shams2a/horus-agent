@@ -199,3 +199,29 @@ func TestInstallStagedRechecksEverything(t *testing.T) {
 		t.Errorf("le binaire ne doit pas avoir changé : %q", got)
 	}
 }
+
+// Le service d'aide ne suit aucun lien et ne lit jamais au-delà de la limite,
+// même si la taille annoncée change entre la vérification et la lecture.
+func TestReadRegularRefusesLinksAndSpecialFiles(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "cible")
+	if err := os.WriteFile(target, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "lien")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skip("liens symboliques indisponibles :", err)
+	}
+	if _, err := readRegular(link, 64); err == nil {
+		t.Error("un lien symbolique ne doit pas être suivi")
+	}
+	if _, err := readRegular("/dev/zero", 64); err == nil {
+		t.Error("/dev/zero doit être refusé")
+	}
+	if _, err := readRegular(target, 3); err == nil {
+		t.Error("fichier trop gros accepté")
+	}
+	if raw, err := readRegular(target, 64); err != nil || string(raw) != "secret" {
+		t.Errorf("lecture = %q, %v", raw, err)
+	}
+}

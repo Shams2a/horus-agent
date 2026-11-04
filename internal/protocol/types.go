@@ -106,8 +106,14 @@ type ErrorBody struct {
 	Error struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`
+		// ServerTimeMS accompagne clock_skew (0.3.1) : l'heure de Network,
+		// pour que l'agent corrige ses horodatages.
+		ServerTimeMS int64 `json:"server_time_ms,omitempty"`
 	} `json:"error"`
 }
+
+// CodeClockSkew : horloge de la machine trop éloignée de celle de Network.
+const CodeClockSkew = "clock_skew"
 
 // --- Fiche de la machine (§ 5) -------------------------------------------
 
@@ -151,6 +157,9 @@ type Facts struct {
 	// Ce que « install.sh --repair » corrigerait (0.3.0) : liste vide si
 	// rien. Absent à l'inscription et chez les agents plus anciens.
 	Repair []string `json:"repair"`
+	// ClockOffsetS : écart corrigé entre l'horloge de la machine et celle de
+	// Network, en secondes (0.3.1). Absent si aucun écart n'a été corrigé.
+	ClockOffsetS int64 `json:"clock_offset_s,omitempty"`
 }
 
 // Codes de Facts.Repair.

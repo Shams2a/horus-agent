@@ -196,6 +196,10 @@ func cmdUpdate(ctx context.Context, args []string) error {
 	}
 	fmt.Printf("horus-agent %s installé.\n", target)
 	if _, statErr := os.Stat("/run/systemd/system"); statErr == nil {
+		if setup.HelperInstalled() {
+			// Unités de la nouvelle version, puis redémarrage.
+			return setup.RefreshInstall(os.Stdout)
+		}
 		return execRestart()
 	}
 	return nil
@@ -205,7 +209,6 @@ func execRestart() error {
 	return runCommand("systemctl", "restart", config.ServiceName)
 }
 
-// cmdRun est la boucle du service. Il renvoie le code de sortie.
 // cmdDockerRead : lancé en root par horus-agent-docker@.service, une fois par
 // connexion de l'agent. Ne lit rien sur l'entrée : renvoie la liste des
 // conteneurs sur la sortie (le socket), puis s'arrête.
@@ -216,6 +219,7 @@ func cmdDockerRead(ctx context.Context) error {
 	return json.NewEncoder(os.Stdout).Encode(collect.New().DockerDirect(ctx))
 }
 
+// cmdRun est la boucle du service. Il renvoie le code de sortie.
 func cmdRun(ctx context.Context) int {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	cfg, err := config.Load(config.ConfigPath)
