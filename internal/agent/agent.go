@@ -67,9 +67,11 @@ type Runner struct {
 	Uninstall Uninstaller
 	// Capabilities annoncées dans la fiche (§ 5), par exemple remote_uninstall.
 	Capabilities []string
-	Version      string
-	Log          *slog.Logger
-	Now          func() time.Time
+	// Repair : ce que --repair corrigerait (setup.RepairNeeded), dans la fiche.
+	Repair  []string
+	Version string
+	Log     *slog.Logger
+	Now     func() time.Time
 
 	buffer      []protocol.Sample
 	batch       int
@@ -160,6 +162,7 @@ func (r *Runner) facts(ctx context.Context) *protocol.Facts {
 	f.Collectors = r.Config.Collectors
 	f.AllowRemoteUpdate = r.Config.AllowRemoteUpdate
 	f.Capabilities = r.Capabilities
+	f.Repair = r.Repair
 	raw, _ := json.Marshal(f)
 	hash := sha256.Sum256(raw)
 	if hash == r.factsHash && r.Now().Sub(r.factsSentAt) < FactsMaxAge {

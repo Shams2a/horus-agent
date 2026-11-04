@@ -19,6 +19,8 @@ import (
 type Collector struct {
 	Root         string
 	DockerSocket string
+	// DockerReader : socket du service root de lecture Docker (0.3.0).
+	DockerReader string
 	Statfs       func(path string) (total, free, avail uint64, err error)
 	// IsDir écarte les fichiers montés un par un (/etc/resolv.conf dans un
 	// conteneur Docker), qui ne sont pas des disques.
@@ -36,6 +38,7 @@ func New() *Collector {
 	return &Collector{
 		Root:         "/",
 		DockerSocket: "/var/run/docker.sock",
+		DockerReader: "/run/horus-agent/docker.sock",
 		Statfs:       statfs,
 		IsDir: func(path string) bool {
 			info, err := os.Stat(path)

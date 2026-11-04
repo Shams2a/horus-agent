@@ -247,12 +247,14 @@ L'agent l'envoie aussi pour confirmer une désinstallation demandée depuis Netw
   "disks": [ { "mount": "/", "fs": "ext4", "total_bytes": 34359738368 } ],
   "collectors": ["system", "systemd"],
   "allow_remote_update": true,
-  "capabilities": ["remote_uninstall"]
+  "capabilities": ["remote_uninstall"],
+  "repair": []
 }
 ```
 
 - `virtualization` vaut `physical`, `vm`, `lxc`, `container` ou `unknown`. WSL 2 compte comme `vm`.
 - `capabilities` (0.2.0 et suivantes) liste ce que l'installation permet. `remote_uninstall` : le service d'aide root est installé (§ 7 et § 8), la désinstallation peut être demandée depuis Network. Absent : aucune capacité (installations 0.1.x).
+- `repair` (0.3.0 et suivantes) liste ce que `install.sh --repair` corrigerait sur la machine ; liste vide si rien. Codes : `binary_writable` (binaire modifiable par le compte de l'agent), `helper_missing` (service d'aide absent), `lxc_unit_missing` (complément LXC absent, l'agent mesure l'hôte), `docker_group` (compte de l'agent dans le groupe `docker`, équivalent à root), `docker_reader_missing` (collecteur `docker` coché sans le service de lecture Docker). Network affiche « À réparer » quand la liste n'est pas vide. Absent à l'inscription et chez les agents plus anciens : Network considère alors à réparer une 0.2.x sans `remote_uninstall`.
 - Les interfaces de boucle locale (`lo`) et les interfaces virtuelles de conteneurs (`veth*`, `docker0`, `br-*`) sont exclues.
 - Les disques retenus sont les systèmes de fichiers réels. Les pseudo-systèmes (`tmpfs`, `overlay`, `proc`, `squashfs`…) sont exclus.
 
@@ -277,7 +279,8 @@ Chaque bloc n'est présent que si son collecteur est actif.
 
 - Collecteur `system` : `cpu`, `memory`, `disks`, `network`. `usage_pct` est la moyenne sur l'intervalle depuis la mesure précédente. Les débits sont aussi des moyennes sur cet intervalle.
 - Collecteur `systemd` : la liste des unités en échec. Une liste vide signifie qu'aucune unité n'est en échec.
-- Collecteur `docker` : `state` reprend l'état Docker (`running`, `exited`, `restarting`, `paused`, `created`, `dead`). Si le socket Docker est inaccessible, le bloc vaut `{ "error": "socket_unavailable" }`.
+- Collecteur `docker` : `state` reprend l'état Docker (`running`, `exited`, `restarting`, `paused`, `created`, `dead`). Si Docker est inaccessible, le bloc vaut `{ "error": "socket_unavailable" }`.
+- Depuis 0.3.0, l'agent n'accède plus au socket Docker, qui équivaut à root. Il se connecte à `/run/horus-agent/docker.sock` (`horus-agent-docker.socket`, réservé au groupe `horus-agent`). Chaque connexion lance `horus-agent docker-read` en root, qui ne lit rien de ce que l'agent envoie : deux requêtes fixes en lecture seule à Docker (liste et inspection des conteneurs), puis la réponse filtrée ci-dessus. Les installations plus anciennes avaient mis le compte de l'agent dans le groupe `docker` : `--repair` l'en retire et installe ce service.
 - `memory.used_bytes` exclut le cache et les tampons (`MemTotal - MemAvailable`).
 - `disks[].avail_bytes` (0.2.3) : espace libre pour un compte autre que root, sans la réserve d'ext4 (5 % par défaut). Le pourcentage affiché et le seuil se calculent comme `df` : `used_bytes / (used_bytes + avail_bytes)`. Sans `avail_bytes` (agents plus anciens), Network se replie sur `used_bytes / total_bytes`.
 
@@ -331,6 +334,7 @@ Comme pour la mise à jour, Network ne transmet aucun paramètre. Au pire, quelq
 | `/var/lib/horus-agent/requests/` | demandes de l'agent au service d'aide (`update/`, `uninstall`) | `horus-agent` |
 | `/etc/systemd/system/horus-agent.service` | service | `root` |
 | `/etc/systemd/system/horus-agent-helper.path` et `.service` | service d'aide : surveille `requests/` et lance `horus-agent helper` en root | `root` |
+| `/etc/systemd/system/horus-agent-docker.socket` et `horus-agent-docker@.service` | collecteur `docker` seulement (0.3.0) : lecture Docker en root, une connexion à la fois, sans rien lire de l'agent | `root` |
 | `/etc/systemd/system/horus-agent.service.d/lxc.conf` | conteneur LXC seulement (0.2.2) : désactive `ProtectKernelTunables` et `ProtectControlGroups`, qui masquent LXCFS. Sans lui, l'agent mesure la mémoire, le processeur et la charge de l'hôte. Écrit par `setup` et `--repair` | `root` |
 
 | Code de sortie | Sens |

@@ -38,6 +38,13 @@ const (
 	// Complément de l'unité, écrit seulement dans un conteneur LXC.
 	UnitDropInDir = "/etc/systemd/system/horus-agent.service.d"
 	LXCDropIn     = "/etc/systemd/system/horus-agent.service.d/lxc.conf"
+
+	// Lecture Docker par un service root (0.3.0), installée seulement si le
+	// collecteur docker est coché. Remplace le groupe docker, qui équivaut
+	// à root.
+	DockerSocketUnit  = "/etc/systemd/system/horus-agent-docker.socket"
+	DockerServiceUnit = "/etc/systemd/system/horus-agent-docker@.service"
+	DockerSocketName  = "horus-agent-docker.socket"
 )
 
 // DefaultDownloadBaseURL : Releases GitHub. Écrite dans la configuration

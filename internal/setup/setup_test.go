@@ -128,10 +128,10 @@ func TestHelperUnits(t *testing.T) {
 }
 
 func TestLXCDropInOnlyInLXC(t *testing.T) {
-	if _, ok := serviceFiles(false)[config.LXCDropIn]; ok {
+	if _, ok := serviceFiles(serviceOptions{})[config.LXCDropIn]; ok {
 		t.Error("complément LXC écrit hors d'un conteneur LXC")
 	}
-	dropIn := string(serviceFiles(true)[config.LXCDropIn])
+	dropIn := string(serviceFiles(serviceOptions{lxc: true})[config.LXCDropIn])
 	for _, want := range []string{"[Service]", "ProtectKernelTunables=no", "ProtectControlGroups=no"} {
 		if !strings.Contains(dropIn, want) {
 			t.Errorf("complément LXC sans %q", want)
@@ -140,5 +140,28 @@ func TestLXCDropInOnlyInLXC(t *testing.T) {
 	// Le reste de la protection reste en place.
 	if strings.Contains(dropIn, "ProtectSystem") || strings.Contains(dropIn, "NoNewPrivileges") {
 		t.Error("le complément LXC ne doit relâcher que les deux protections qui masquent LXCFS")
+	}
+}
+
+func TestDockerReaderOnlyWithDockerCollector(t *testing.T) {
+	if _, ok := serviceFiles(serviceOptions{})[config.DockerSocketUnit]; ok {
+		t.Error("lecture Docker installée sans le collecteur docker")
+	}
+	files := serviceFiles(serviceOptions{docker: true})
+	socket := string(files[config.DockerSocketUnit])
+	for _, want := range []string{"ListenStream=/run/horus-agent/docker.sock", "SocketGroup=horus-agent", "SocketMode=0660", "Accept=yes"} {
+		if !strings.Contains(socket, want) {
+			t.Errorf("socket sans %q", want)
+		}
+	}
+	service := string(files[config.DockerServiceUnit])
+	for _, want := range []string{"horus-agent docker-read", "StandardInput=socket", "CapabilityBoundingSet=", "RestrictAddressFamilies=AF_UNIX"} {
+		if !strings.Contains(service, want) {
+			t.Errorf("service de lecture Docker sans %q", want)
+		}
+	}
+	// Plus jamais le groupe docker.
+	if strings.Contains(string(unitFile), "docker") {
+		t.Error("le service de l'agent ne doit pas avoir accès à Docker")
 	}
 }

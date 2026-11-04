@@ -251,11 +251,6 @@ func Setup(ctx context.Context, opts Options) error {
 	if err := config.Save(config.ConfigPath, cfg, gid); err != nil {
 		return err
 	}
-	if slices.Contains(collectors, protocol.CollectorDocker) {
-		if err := setDockerAccess(true); err != nil {
-			p.Printf("Attention : %v\n", err)
-		}
-	}
 
 	// Premier signal envoyé tout de suite : l'admin Network passe à « Connecté ».
 	api.AgentID, api.Key = enrolled.AgentID, key
@@ -274,7 +269,11 @@ func Setup(ctx context.Context, opts Options) error {
 	if opts.NoService {
 		p.Printf("\nAgent inscrit. Service non installé (--no-service) : lancez « horus-agent run » sous le compte horus-agent.\n")
 	} else {
-		if err := installService(facts.Virtualization == "lxc"); err != nil {
+		opts := serviceOptions{
+			lxc:    facts.Virtualization == "lxc",
+			docker: slices.Contains(collectors, protocol.CollectorDocker),
+		}
+		if err := installService(opts); err != nil {
 			return err
 		}
 		p.Printf("\nAgent installé et connecté.\n")
@@ -411,9 +410,11 @@ func Configure(opts ConfigureOptions) error {
 	if err := config.Save(config.ConfigPath, cfg, gid); err != nil {
 		return err
 	}
-	if after := slices.Contains(cfg.Collectors, protocol.CollectorDocker); after != before {
-		if err := setDockerAccess(after); err != nil {
-			p.Printf("Attention : %v\n", err)
+	if after := slices.Contains(cfg.Collectors, protocol.CollectorDocker); after != before && hasSystemd() {
+		// La lecture Docker passe par un service root, installé ou retiré
+		// avec le collecteur.
+		if err := installService(optionsFor(cfg)); err != nil {
+			return err
 		}
 	}
 	if err := restartService(); err != nil {
@@ -469,6 +470,7 @@ func uninstall(ctx context.Context, out io.Writer, notify bool) error {
 		// Le service d'aide peut être celui qui exécute cette désinstallation :
 		// on arrête seulement l'unité path, jamais le service en cours.
 		_ = run("systemctl", "disable", "--now", config.HelperPathName)
+		removeDockerReader()
 		for _, unit := range []string{config.UnitPath, config.HelperPathUnit, config.HelperServiceUnit} {
 			_ = os.Remove(unit)
 		}
@@ -494,7 +496,8 @@ func Repair(out io.Writer) error {
 	if err := requireRoot(); err != nil {
 		return err
 	}
-	if _, err := config.Load(config.ConfigPath); err != nil {
+	cfg, err := config.Load(config.ConfigPath)
+	if err != nil {
 		return fmt.Errorf("aucune installation à réparer : %w", err)
 	}
 	if _, err := identity.Load(config.KeyPath); err != nil {
@@ -510,13 +513,16 @@ func Repair(out io.Writer) error {
 	if !hasSystemd() {
 		return errors.New("systemd est introuvable")
 	}
-	if err := installService(collect.New().Virtualization(context.Background()) == "lxc"); err != nil {
+	if err := removeDockerGroup(); err != nil {
+		return err
+	}
+	if err := installService(optionsFor(cfg)); err != nil {
 		return err
 	}
 	if err := restartService(); err != nil {
 		return err
 	}
-	fmt.Fprintln(out, "Agent réparé : binaire protégé, service d'aide installé, désinstallation à distance possible.")
+	fmt.Fprintln(out, "Agent réparé : binaire protégé, service d'aide installé, désinstallation à distance possible, lecture Docker sans le groupe docker.")
 	return nil
 }
 

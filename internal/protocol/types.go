@@ -148,7 +148,19 @@ type Facts struct {
 	Collectors        []string    `json:"collectors"`
 	AllowRemoteUpdate bool        `json:"allow_remote_update"`
 	Capabilities      []string    `json:"capabilities,omitempty"`
+	// Ce que « install.sh --repair » corrigerait (0.3.0) : liste vide si
+	// rien. Absent à l'inscription et chez les agents plus anciens.
+	Repair []string `json:"repair"`
 }
+
+// Codes de Facts.Repair.
+const (
+	RepairBinaryWritable      = "binary_writable"
+	RepairHelperMissing       = "helper_missing"
+	RepairLXCUnitMissing      = "lxc_unit_missing"
+	RepairDockerGroup         = "docker_group"
+	RepairDockerReaderMissing = "docker_reader_missing"
+)
 
 // --- Mesures (§ 6) --------------------------------------------------------
 

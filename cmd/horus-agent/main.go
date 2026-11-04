@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -34,6 +35,7 @@ Usage :
   horus-agent uninstall                              Prévient Network et supprime l'agent
   horus-agent run                                    Lance l'agent (utilisé par le service systemd)
   horus-agent helper                                 Service d'aide root (utilisé par systemd)
+  horus-agent docker-read                            Lecture Docker en root (utilisé par systemd)
   horus-agent version                                Affiche la version
 
 Ajoutez --help après une commande pour voir ses options.
@@ -71,6 +73,8 @@ func main() {
 		os.Exit(cmdRun(ctx))
 	case "helper":
 		err = setup.Helper(ctx, os.Stdout)
+	case "docker-read":
+		err = cmdDockerRead(ctx)
 	default:
 		fmt.Fprintf(os.Stderr, "Commande inconnue : %s\n\n%s", cmd, usage)
 		os.Exit(2)
@@ -202,6 +206,16 @@ func execRestart() error {
 }
 
 // cmdRun est la boucle du service. Il renvoie le code de sortie.
+// cmdDockerRead : lancé en root par horus-agent-docker@.service, une fois par
+// connexion de l'agent. Ne lit rien sur l'entrée : renvoie la liste des
+// conteneurs sur la sortie (le socket), puis s'arrête.
+func cmdDockerRead(ctx context.Context) error {
+	if os.Geteuid() != 0 {
+		return errors.New("cette commande doit être lancée en root (sudo)")
+	}
+	return json.NewEncoder(os.Stdout).Encode(collect.New().DockerDirect(ctx))
+}
+
 func cmdRun(ctx context.Context) int {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	cfg, err := config.Load(config.ConfigPath)
@@ -233,6 +247,7 @@ func cmdRun(ctx context.Context) int {
 		Version:      version.Version,
 		Log:          log,
 		Capabilities: capabilities,
+		Repair:       setup.RepairNeeded(cfg),
 		Update: func(ctx context.Context, target string) (bool, error) {
 			u, err := update.New(cfg.DownloadBaseURL, config.BinaryPath, version.Version)
 			if err != nil {

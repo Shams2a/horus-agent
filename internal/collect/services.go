@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -52,8 +54,44 @@ type dockerInspect struct {
 	RestartCount int `json:"RestartCount"`
 }
 
-// docker interroge le socket Docker en lecture seule (liste et inspection).
+// maxDockerReply borne la réponse du service de lecture Docker.
+const maxDockerReply = 4 << 20
+
+// docker passe par le service root de lecture Docker s'il est installé
+// (0.3.0). Sinon, accès direct au socket Docker : installations plus
+// anciennes, où le compte de l'agent est encore dans le groupe docker.
 func (c *Collector) docker(ctx context.Context) *protocol.Docker {
+	if _, err := os.Stat(c.DockerReader); err == nil {
+		return c.dockerFromReader(ctx)
+	}
+	return c.DockerDirect(ctx)
+}
+
+func (c *Collector) dockerFromReader(ctx context.Context) *protocol.Docker {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "unix", c.DockerReader)
+	if err != nil {
+		return &protocol.Docker{Error: "socket_unavailable"}
+	}
+	defer conn.Close()
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
+	var out protocol.Docker
+	if err := json.NewDecoder(io.LimitReader(conn, maxDockerReply)).Decode(&out); err != nil {
+		return &protocol.Docker{Error: "socket_unavailable"}
+	}
+	if out.Error == "" && out.Containers == nil {
+		out.Containers = []protocol.Container{}
+	}
+	return &out
+}
+
+// DockerDirect interroge le socket Docker en lecture seule (liste et
+// inspection). Utilisé par « horus-agent docker-read », en root.
+func (c *Collector) DockerDirect(ctx context.Context) *protocol.Docker {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	httpc := &http.Client{Transport: &http.Transport{

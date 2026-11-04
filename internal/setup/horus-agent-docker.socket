@@ -1,0 +1,18 @@
+[Unit]
+Description=Horus Network monitoring agent, lecture Docker
+
+# Seul le compte de l'agent peut s'y connecter. Chaque connexion lance
+# horus-agent-docker@.service, qui renvoie la liste des conteneurs puis
+# s'arrête. L'agent n'a ainsi jamais accès au socket Docker lui-même, qui
+# équivaut à root.
+[Socket]
+ListenStream=/run/horus-agent/docker.sock
+SocketUser=root
+SocketGroup=horus-agent
+SocketMode=0660
+DirectoryMode=0755
+Accept=yes
+MaxConnections=4
+
+[Install]
+WantedBy=sockets.target

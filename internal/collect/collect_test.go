@@ -44,6 +44,7 @@ func newTestCollector(t *testing.T, files map[string]string) (*Collector, *time.
 	c := New()
 	c.Root = fakeRoot(t, files)
 	c.Now = func() time.Time { return now }
+	c.DockerReader = filepath.Join(t.TempDir(), "absent-reader.sock")
 	// 100 Gio, 25 libres dont 20 pour un compte autre que root (réserve ext4).
 	c.Statfs = func(path string) (uint64, uint64, uint64, error) {
 		return 100 << 30, 25 << 30, 20 << 30, nil
@@ -211,5 +212,38 @@ func TestBootTimeFromUptime(t *testing.T) {
 	want := now.Add(-132280 * time.Millisecond).Truncate(time.Second)
 	if b := c.bootTime(); b == nil || !b.Equal(want) {
 		t.Errorf("démarrage = %v, attendu %v", b, want)
+	}
+}
+
+// Avec le service root de lecture Docker (0.3.0), l'agent ne touche jamais
+// au socket Docker : il lit la réponse du service, sans rien lui envoyer.
+func TestDockerReader(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "reader.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Skip("sockets unix indisponibles :", err)
+	}
+	defer ln.Close()
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		conn.Write([]byte(`{"containers":[{"id":"4f1c2a9e0b7d","name":"api","image":"ghcr.io/acme/api:1.2","state":"running","restart_count":0}]}` + "\n"))
+	}()
+
+	c, _ := newTestCollector(t, nil)
+	c.DockerReader = sock
+	c.DockerSocket = filepath.Join(t.TempDir(), "jamais-utilise.sock")
+	d := c.Sample(context.Background(), []string{protocol.CollectorDocker}).Metrics.Docker
+	if d == nil || d.Error != "" || len(d.Containers) != 1 || d.Containers[0].Name != "api" {
+		t.Fatalf("docker = %+v", d)
+	}
+
+	// Service installé mais qui ne répond pas : erreur, pas de repli sur le socket Docker.
+	ln.Close()
+	if d := c.Sample(context.Background(), []string{protocol.CollectorDocker}).Metrics.Docker; d.Error != "socket_unavailable" {
+		t.Errorf("docker = %+v", d)
 	}
 }

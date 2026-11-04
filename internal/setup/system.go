@@ -13,7 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Shams2a/horus-agent/internal/collect"
 	"github.com/Shams2a/horus-agent/internal/config"
+	"github.com/Shams2a/horus-agent/internal/protocol"
 )
 
 //go:embed horus-agent.service
@@ -27,6 +29,12 @@ var helperServiceFile []byte
 
 //go:embed horus-agent-lxc.conf
 var lxcDropInFile []byte
+
+//go:embed horus-agent-docker.socket
+var dockerSocketFile []byte
+
+//go:embed horus-agent-docker@.service
+var dockerServiceFile []byte
 
 func requireRoot() error {
 	if os.Geteuid() != 0 {
@@ -78,16 +86,12 @@ func agentAccount() (int, int, error) {
 	return uid, gid, nil
 }
 
-// setDockerAccess ajoute ou retire le compte de l'agent du groupe docker.
-func setDockerAccess(enabled bool) error {
+// removeDockerGroup retire le compte de l'agent du groupe docker, où les
+// versions d'avant 0.3.0 le mettaient : ce groupe équivaut à root. La
+// lecture Docker passe désormais par horus-agent-docker.socket.
+func removeDockerGroup() error {
 	if _, err := user.LookupGroup("docker"); err != nil {
-		if enabled {
-			return errors.New("groupe docker introuvable : Docker est-il installé ?")
-		}
 		return nil
-	}
-	if enabled {
-		return run("usermod", "-aG", "docker", config.UserName)
 	}
 	u, err := user.Lookup(config.UserName)
 	if err != nil {
@@ -137,30 +141,57 @@ func ensureLayout(uid, gid int) error {
 	return os.Symlink(config.BinaryPath, config.AdminLink)
 }
 
+// serviceOptions : ce qui dépend de la machine et de la configuration.
+type serviceOptions struct {
+	lxc    bool // conteneur LXC : complément qui garde LXCFS visible
+	docker bool // collecteur docker coché : service root de lecture Docker
+}
+
+// optionsFor calcule les options d'une installation existante.
+func optionsFor(cfg *config.Config) serviceOptions {
+	return serviceOptions{
+		lxc:    collect.New().Virtualization(context.Background()) == "lxc",
+		docker: cfg.Has(protocol.CollectorDocker),
+	}
+}
+
 // serviceFiles : les unités à écrire. Dans un conteneur LXC s'ajoute un
 // complément qui garde visibles les montages LXCFS (horus-agent-lxc.conf).
-func serviceFiles(lxc bool) map[string][]byte {
+func serviceFiles(opts serviceOptions) map[string][]byte {
 	files := map[string][]byte{
 		config.UnitPath:          unitFile,
 		config.HelperPathUnit:    helperPathFile,
 		config.HelperServiceUnit: helperServiceFile,
 	}
-	if lxc {
+	if opts.lxc {
 		files[config.LXCDropIn] = lxcDropInFile
+	}
+	if opts.docker {
+		files[config.DockerSocketUnit] = dockerSocketFile
+		files[config.DockerServiceUnit] = dockerServiceFile
 	}
 	return files
 }
 
-func installService(lxc bool) error {
+func removeDockerReader() {
+	_ = run("systemctl", "disable", "--now", config.DockerSocketName)
+	_ = os.Remove(config.DockerSocketUnit)
+	_ = os.Remove(config.DockerServiceUnit)
+}
+
+func installService(opts serviceOptions) error {
 	if err := os.RemoveAll(config.UnitDropInDir); err != nil {
 		return err
 	}
-	if lxc {
+	if !opts.docker {
+		removeDockerReader()
+	}
+	if opts.lxc {
 		if err := os.MkdirAll(config.UnitDropInDir, 0o755); err != nil {
 			return err
 		}
 	}
-	for path, content := range serviceFiles(lxc) {
+	for path, content := range serviceFiles(opts) {
 		if err := os.WriteFile(path, content, 0o644); err != nil {
 			return err
 		}
@@ -170,6 +201,11 @@ func installService(lxc bool) error {
 	}
 	if err := run("systemctl", "enable", "--now", config.HelperPathName); err != nil {
 		return err
+	}
+	if opts.docker {
+		if err := run("systemctl", "enable", "--now", config.DockerSocketName); err != nil {
+			return err
+		}
 	}
 	if err := run("systemctl", "enable", config.ServiceName); err != nil {
 		return err
