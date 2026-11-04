@@ -77,6 +77,8 @@ Network refuse la requête (`401 signature_invalid`) si :
 
 Si la signature est valide mais que l'horodatage s'écarte de plus de 5 minutes de l'heure du serveur, Network répond `401 clock_skew` avec son heure : `{"error": {"code": "clock_skew", "message": "…", "server_time_ms": 1761631920000}}`. Depuis 0.3.1, l'agent en déduit l'écart, corrige ses horodatages (signature et mesures) et renvoie aussitôt la requête. Il refuse un écart de plus de 30 jours, journalise l'écart et l'indique dans sa fiche (`clock_offset_s`, § 5). Une signature invalide ne donne jamais l'heure du serveur.
 
+Depuis 0.3.2, l'agent suit aussi l'en-tête `Date` de chaque réponse à une requête signée : la correction s'ajuste dès que l'écart dépasse 30 secondes et disparaît dès que l'horloge redevient juste, sans attendre un refus. Son dernier horodatage n'est jamais remis en arrière.
+
 Un vecteur de test se trouve en annexe A. Les deux implémentations doivent le valider.
 
 ## 3. Inscription

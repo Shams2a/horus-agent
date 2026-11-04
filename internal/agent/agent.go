@@ -166,8 +166,13 @@ func (r *Runner) facts(ctx context.Context) *protocol.Facts {
 	f.AllowRemoteUpdate = r.Config.AllowRemoteUpdate
 	f.Capabilities = r.Capabilities
 	f.Repair = r.Repair
-	if off := r.Client.Offset(); off.Abs() >= time.Second {
+	if off := r.Client.Offset(); off != 0 {
 		f.ClockOffsetS = int64(off.Round(time.Second) / time.Second)
+		// Démarrage calculé avec l'horloge de la machine : à l'heure de Network.
+		if f.BootTime != nil {
+			boot := f.BootTime.Add(off).Truncate(time.Second)
+			f.BootTime = &boot
+		}
 	}
 	raw, _ := json.Marshal(f)
 	hash := sha256.Sum256(raw)
@@ -196,8 +201,12 @@ func (r *Runner) Flush(ctx context.Context) error {
 		before := r.Client.Offset()
 		resp, err := r.Client.Report(ctx, req)
 		if after := r.Client.Offset(); after != before {
-			r.Log.Warn("horloge de la machine décalée : envois corrigés à l'heure de Network. Vérifiez la synchronisation de l'heure (NTP).",
-				"écart", after.Round(time.Second).String())
+			if after == 0 {
+				r.Log.Info("horloge de la machine de nouveau à l'heure de Network : correction abandonnée")
+			} else {
+				r.Log.Warn("horloge de la machine décalée : envois corrigés à l'heure de Network. Vérifiez la synchronisation de l'heure (NTP).",
+					"écart", after.Round(time.Second).String())
+			}
 		}
 		if client.StatusOf(err) == http.StatusGone {
 			return ErrRevoked

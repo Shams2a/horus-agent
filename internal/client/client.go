@@ -70,6 +70,32 @@ type Client struct {
 // fausse pour qu'on la rattrape sans risque.
 const maxClockOffset = 30 * 24 * time.Hour
 
+// clockTolerance : écart en deçà duquel l'horloge est tenue pour juste.
+// L'en-tête Date est à la seconde, et Network tolère 5 minutes.
+const clockTolerance = 30 * time.Second
+
+// observeDate suit l'heure de Network d'après l'en-tête Date de chaque
+// réponse : la correction s'ajuste dès que l'horloge de la machine dérive,
+// et disparaît dès qu'elle redevient juste, sans attendre un refus
+// clock_skew. Le dernier horodatage n'est pas remis à zéro : Network refuse
+// tout horodatage inférieur au dernier accepté.
+func (c *Client) observeDate(header string, sent, received time.Time) {
+	server, err := http.ParseTime(header)
+	if err != nil {
+		return
+	}
+	measured := server.Sub(sent.Add(received.Sub(sent) / 2))
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	switch {
+	case measured.Abs() < clockTolerance:
+		c.offset = 0
+	case measured.Abs() > maxClockOffset:
+	case (measured - c.offset).Abs() >= clockTolerance:
+		c.offset = measured.Round(time.Second)
+	}
+}
+
 // Offset renvoie la correction d'horloge en cours (0 si l'horloge est juste).
 func (c *Client) Offset() time.Duration {
 	c.mu.Lock()
@@ -143,11 +169,15 @@ func (c *Client) send(ctx context.Context, path string, in, out any, signed bool
 		req.Header.Set(protocol.HeaderSignature, protocol.Sign(c.Key, http.MethodPost, target.EscapedPath(), ts, body))
 	}
 
+	sent := c.Now()
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+	if signed {
+		c.observeDate(resp.Header.Get("Date"), sent, c.Now())
+	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return err

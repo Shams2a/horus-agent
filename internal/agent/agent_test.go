@@ -38,6 +38,8 @@ type fakeNetwork struct {
 	mu      sync.Mutex
 	reports []protocol.ReportRequest
 	respond func(n int, req protocol.ReportRequest) (int, string)
+	// clock : avance de l'horloge du faux Network (en-tête Date).
+	clock time.Duration
 }
 
 func (f *fakeNetwork) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -57,6 +59,9 @@ func (f *fakeNetwork) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	status, payload := http.StatusOK, `{"report_interval_s":30,"update":null}`
 	if f.respond != nil {
 		status, payload = f.respond(n, req)
+	}
+	if f.clock != 0 {
+		w.Header().Set("Date", time.Now().Add(f.clock).UTC().Format(http.TimeFormat))
 	}
 	w.WriteHeader(status)
 	w.Write([]byte(payload))
@@ -274,6 +279,7 @@ func TestClockSkewIsCorrected(t *testing.T) {
 		}
 		return http.StatusOK, `{"report_interval_s":30}`
 	})
+	net.clock = time.Hour
 	r.collect(context.Background())
 	if err := r.Flush(context.Background()); err != nil {
 		t.Fatalf("erreur = %v", err)
