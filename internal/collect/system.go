@@ -117,11 +117,13 @@ func (c *Collector) mounts() []mount {
 func (c *Collector) diskUsage() []protocol.DiskUsage {
 	var out []protocol.DiskUsage
 	for _, m := range c.mounts() {
-		total, free, err := c.Statfs(m.point)
+		total, free, avail, err := c.Statfs(m.point)
 		if err != nil || total == 0 {
 			continue
 		}
-		out = append(out, protocol.DiskUsage{Mount: m.point, UsedBytes: total - free, TotalBytes: total})
+		out = append(out, protocol.DiskUsage{
+			Mount: m.point, UsedBytes: total - free, TotalBytes: total, AvailBytes: &avail,
+		})
 	}
 	return out
 }

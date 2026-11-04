@@ -184,6 +184,9 @@ type DiskUsage struct {
 	Mount      string `json:"mount"`
 	UsedBytes  uint64 `json:"used_bytes"`
 	TotalBytes uint64 `json:"total_bytes"`
+	// Espace libre pour un compte autre que root, sans la réserve d'ext4
+	// (0.2.3). Absent des agents plus anciens.
+	AvailBytes *uint64 `json:"avail_bytes,omitempty"`
 }
 
 type NetRate struct {

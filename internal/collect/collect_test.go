@@ -44,8 +44,9 @@ func newTestCollector(t *testing.T, files map[string]string) (*Collector, *time.
 	c := New()
 	c.Root = fakeRoot(t, files)
 	c.Now = func() time.Time { return now }
-	c.Statfs = func(path string) (uint64, uint64, error) {
-		return 100 << 30, 25 << 30, nil
+	// 100 Gio, 25 libres dont 20 pour un compte autre que root (réserve ext4).
+	c.Statfs = func(path string) (uint64, uint64, uint64, error) {
+		return 100 << 30, 25 << 30, 20 << 30, nil
 	}
 	// /etc/hosts joue le fichier monté seul, comme Docker le fait.
 	c.IsDir = func(path string) bool { return path != "/etc/hosts" }
@@ -95,7 +96,7 @@ func TestSystemSample(t *testing.T) {
 	if m.Memory.UsedBytes != 2000000*1024 || m.Memory.SwapUsedBytes != 250000*1024 {
 		t.Errorf("mémoire = %+v", m.Memory)
 	}
-	if len(m.Disks) != 2 || m.Disks[0].UsedBytes != 75<<30 {
+	if len(m.Disks) != 2 || m.Disks[0].UsedBytes != 75<<30 || m.Disks[0].AvailBytes == nil || *m.Disks[0].AvailBytes != 20<<30 {
 		t.Errorf("disques = %+v", m.Disks)
 	}
 	if len(m.Network) != 1 || m.Network[0] != (protocol.NetRate{Iface: "eth0", RxBps: 1000, TxBps: 500}) {

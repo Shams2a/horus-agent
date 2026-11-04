@@ -28,7 +28,7 @@ func (c *Collector) Facts(ctx context.Context) protocol.Facts {
 	}
 	f.Hostname, _ = os.Hostname()
 	for _, m := range c.mounts() {
-		if total, _, err := c.Statfs(m.point); err == nil && total > 0 {
+		if total, _, _, err := c.Statfs(m.point); err == nil && total > 0 {
 			f.Disks = append(f.Disks, protocol.DiskInfo{Mount: m.point, FS: m.fs, TotalBytes: total})
 		}
 	}

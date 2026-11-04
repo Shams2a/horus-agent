@@ -264,7 +264,7 @@ Chaque bloc n'est présent que si son collecteur est actif.
 {
   "cpu": { "usage_pct": 12.5, "load1": 0.42, "load5": 0.35, "load15": 0.30 },
   "memory": { "used_bytes": 3221225472, "total_bytes": 8589934592, "swap_used_bytes": 0, "swap_total_bytes": 1073741824 },
-  "disks": [ { "mount": "/", "used_bytes": 12884901888, "total_bytes": 34359738368 } ],
+  "disks": [ { "mount": "/", "used_bytes": 12884901888, "total_bytes": 34359738368, "avail_bytes": 19756849152 } ],
   "network": [ { "iface": "eth0", "rx_bps": 120400, "tx_bps": 80200 } ],
   "systemd": { "failed_units": ["nginx.service"] },
   "docker": {
@@ -279,6 +279,7 @@ Chaque bloc n'est présent que si son collecteur est actif.
 - Collecteur `systemd` : la liste des unités en échec. Une liste vide signifie qu'aucune unité n'est en échec.
 - Collecteur `docker` : `state` reprend l'état Docker (`running`, `exited`, `restarting`, `paused`, `created`, `dead`). Si le socket Docker est inaccessible, le bloc vaut `{ "error": "socket_unavailable" }`.
 - `memory.used_bytes` exclut le cache et les tampons (`MemTotal - MemAvailable`).
+- `disks[].avail_bytes` (0.2.3) : espace libre pour un compte autre que root, sans la réserve d'ext4 (5 % par défaut). Le pourcentage affiché et le seuil se calculent comme `df` : `used_bytes / (used_bytes + avail_bytes)`. Sans `avail_bytes` (agents plus anciens), Network se replie sur `used_bytes / total_bytes`.
 
 ## 7. Mises à jour
 
@@ -356,7 +357,7 @@ Raisons de dégradation (codes stables, affichés dans la fiche) :
 
 | Code | Condition |
 |---|---|
-| `disk_high` | un disque au-dessus de 90 % (`used_bytes / total_bytes`) |
+| `disk_high` | un disque au-dessus de 90 %, calculé comme `df` (`used_bytes / (used_bytes + avail_bytes)`, ou `used_bytes / total_bytes` sans `avail_bytes`) |
 | `memory_high` | mémoire au-dessus de 95 % sur toutes les mesures des 5 dernières minutes |
 | `systemd_failed` | au moins une unité dans `failed_units` |
 

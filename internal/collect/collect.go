@@ -19,7 +19,7 @@ import (
 type Collector struct {
 	Root         string
 	DockerSocket string
-	Statfs       func(path string) (total, free uint64, err error)
+	Statfs       func(path string) (total, free, avail uint64, err error)
 	// IsDir écarte les fichiers montés un par un (/etc/resolv.conf dans un
 	// conteneur Docker), qui ne sont pas des disques.
 	IsDir func(path string) bool
@@ -56,13 +56,15 @@ func (c *Collector) read(p string) ([]byte, error) {
 	return os.ReadFile(c.path(p))
 }
 
-func statfs(path string) (uint64, uint64, error) {
+// statfs : taille, espace libre, et espace libre pour un compte autre que
+// root (sans la réserve d'ext4), comme df.
+func statfs(path string) (uint64, uint64, uint64, error) {
 	var st syscall.Statfs_t
 	if err := syscall.Statfs(path, &st); err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	bsize := uint64(st.Bsize)
-	return st.Blocks * bsize, st.Bfree * bsize, nil
+	return st.Blocks * bsize, st.Bfree * bsize, st.Bavail * bsize, nil
 }
 
 // Prime fait une première lecture des compteurs, pour que la première mesure
