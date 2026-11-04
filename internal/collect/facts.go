@@ -75,7 +75,18 @@ func (c *Collector) cpuModel() string {
 	return ""
 }
 
+// bootTime : maintenant moins /proc/uptime, que LXCFS ramène au démarrage
+// du conteneur. btime (/proc/stat) reste celui de l'hôte dans un LXC : il ne
+// sert qu'en secours.
 func (c *Collector) bootTime() *time.Time {
+	if raw, err := c.read("proc/uptime"); err == nil {
+		if fields := strings.Fields(string(raw)); len(fields) > 0 {
+			if up, err := strconv.ParseFloat(fields[0], 64); err == nil && up >= 0 {
+				t := c.Now().Add(-time.Duration(up * float64(time.Second))).UTC().Truncate(time.Second)
+				return &t
+			}
+		}
+	}
 	raw, err := c.read("proc/stat")
 	if err != nil {
 		return nil

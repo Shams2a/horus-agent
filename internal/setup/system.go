@@ -25,6 +25,9 @@ var helperPathFile []byte
 //go:embed horus-agent-helper.service
 var helperServiceFile []byte
 
+//go:embed horus-agent-lxc.conf
+var lxcDropInFile []byte
+
 func requireRoot() error {
 	if os.Geteuid() != 0 {
 		return errors.New("cette commande doit être lancée en root (sudo)")
@@ -134,12 +137,30 @@ func ensureLayout(uid, gid int) error {
 	return os.Symlink(config.BinaryPath, config.AdminLink)
 }
 
-func installService() error {
-	for path, content := range map[string][]byte{
+// serviceFiles : les unités à écrire. Dans un conteneur LXC s'ajoute un
+// complément qui garde visibles les montages LXCFS (horus-agent-lxc.conf).
+func serviceFiles(lxc bool) map[string][]byte {
+	files := map[string][]byte{
 		config.UnitPath:          unitFile,
 		config.HelperPathUnit:    helperPathFile,
 		config.HelperServiceUnit: helperServiceFile,
-	} {
+	}
+	if lxc {
+		files[config.LXCDropIn] = lxcDropInFile
+	}
+	return files
+}
+
+func installService(lxc bool) error {
+	if err := os.RemoveAll(config.UnitDropInDir); err != nil {
+		return err
+	}
+	if lxc {
+		if err := os.MkdirAll(config.UnitDropInDir, 0o755); err != nil {
+			return err
+		}
+	}
+	for path, content := range serviceFiles(lxc) {
 		if err := os.WriteFile(path, content, 0o644); err != nil {
 			return err
 		}

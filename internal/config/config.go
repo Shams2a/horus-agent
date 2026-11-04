@@ -34,6 +34,10 @@ const (
 	HelperPathUnit    = "/etc/systemd/system/horus-agent-helper.path"
 	HelperServiceUnit = "/etc/systemd/system/horus-agent-helper.service"
 	HelperPathName    = "horus-agent-helper.path"
+
+	// Complément de l'unité, écrit seulement dans un conteneur LXC.
+	UnitDropInDir = "/etc/systemd/system/horus-agent.service.d"
+	LXCDropIn     = "/etc/systemd/system/horus-agent.service.d/lxc.conf"
 )
 
 // DefaultDownloadBaseURL : Releases GitHub. Écrite dans la configuration

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Shams2a/horus-agent/internal/config"
 	"github.com/Shams2a/horus-agent/internal/protocol"
 )
 
@@ -123,5 +124,21 @@ func TestHelperUnits(t *testing.T) {
 	}
 	if strings.Contains(string(unitFile), "/opt/horus-agent /var") {
 		t.Error("l'agent ne doit plus pouvoir écrire dans /opt/horus-agent")
+	}
+}
+
+func TestLXCDropInOnlyInLXC(t *testing.T) {
+	if _, ok := serviceFiles(false)[config.LXCDropIn]; ok {
+		t.Error("complément LXC écrit hors d'un conteneur LXC")
+	}
+	dropIn := string(serviceFiles(true)[config.LXCDropIn])
+	for _, want := range []string{"[Service]", "ProtectKernelTunables=no", "ProtectControlGroups=no"} {
+		if !strings.Contains(dropIn, want) {
+			t.Errorf("complément LXC sans %q", want)
+		}
+	}
+	// Le reste de la protection reste en place.
+	if strings.Contains(dropIn, "ProtectSystem") || strings.Contains(dropIn, "NoNewPrivileges") {
+		t.Error("le complément LXC ne doit relâcher que les deux protections qui masquent LXCFS")
 	}
 }

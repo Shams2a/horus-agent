@@ -330,6 +330,7 @@ Comme pour la mise à jour, Network ne transmet aucun paramètre. Au pire, quelq
 | `/var/lib/horus-agent/requests/` | demandes de l'agent au service d'aide (`update/`, `uninstall`) | `horus-agent` |
 | `/etc/systemd/system/horus-agent.service` | service | `root` |
 | `/etc/systemd/system/horus-agent-helper.path` et `.service` | service d'aide : surveille `requests/` et lance `horus-agent helper` en root | `root` |
+| `/etc/systemd/system/horus-agent.service.d/lxc.conf` | conteneur LXC seulement (0.2.2) : désactive `ProtectKernelTunables` et `ProtectControlGroups`, qui masquent LXCFS. Sans lui, l'agent mesure la mémoire, le processeur et la charge de l'hôte. Écrit par `setup` et `--repair` | `root` |
 
 | Code de sortie | Sens |
 |---|---|

@@ -274,7 +274,7 @@ func Setup(ctx context.Context, opts Options) error {
 	if opts.NoService {
 		p.Printf("\nAgent inscrit. Service non installé (--no-service) : lancez « horus-agent run » sous le compte horus-agent.\n")
 	} else {
-		if err := installService(); err != nil {
+		if err := installService(facts.Virtualization == "lxc"); err != nil {
 			return err
 		}
 		p.Printf("\nAgent installé et connecté.\n")
@@ -472,6 +472,7 @@ func uninstall(ctx context.Context, out io.Writer, notify bool) error {
 		for _, unit := range []string{config.UnitPath, config.HelperPathUnit, config.HelperServiceUnit} {
 			_ = os.Remove(unit)
 		}
+		_ = os.RemoveAll(config.UnitDropInDir)
 		_ = run("systemctl", "daemon-reload")
 	}
 	for _, dir := range []string{"/etc/horus-agent", config.StateDir, config.InstallDir} {
@@ -486,7 +487,8 @@ func uninstall(ctx context.Context, out io.Writer, notify bool) error {
 }
 
 // Repair passe une installation au modèle 0.2.0 sans toucher à l'identité de
-// l'agent : binaire root, service d'aide, unités à jour. Lancé par
+// l'agent : binaire root, service d'aide, unités à jour (dont le complément
+// LXC, 0.2.2). Lancé par
 // « install.sh --repair », après le téléchargement du binaire vérifié.
 func Repair(out io.Writer) error {
 	if err := requireRoot(); err != nil {
@@ -508,7 +510,7 @@ func Repair(out io.Writer) error {
 	if !hasSystemd() {
 		return errors.New("systemd est introuvable")
 	}
-	if err := installService(); err != nil {
+	if err := installService(collect.New().Virtualization(context.Background()) == "lxc"); err != nil {
 		return err
 	}
 	if err := restartService(); err != nil {

@@ -200,3 +200,15 @@ func writeFile(t *testing.T, root, name, content string) {
 		t.Fatal(err)
 	}
 }
+
+// Dans un LXC, btime est celui de l'hôte : /proc/uptime (LXCFS) l'emporte.
+func TestBootTimeFromUptime(t *testing.T) {
+	c, now := newTestCollector(t, map[string]string{
+		"proc/stat":   "cpu 1 1 1 1\nbtime 1761631920\n",
+		"proc/uptime": "132.28 120.00\n",
+	})
+	want := now.Add(-132280 * time.Millisecond).Truncate(time.Second)
+	if b := c.bootTime(); b == nil || !b.Equal(want) {
+		t.Errorf("démarrage = %v, attendu %v", b, want)
+	}
+}
