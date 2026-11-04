@@ -209,6 +209,23 @@ func TestUninstallRequest(t *testing.T) {
 	}
 }
 
+// La boucle s'arrête d'elle-même, sans retenter l'envoi ni reconfirmer.
+func TestRunStopsOnUninstall(t *testing.T) {
+	r, net := newRunner(t, func(int, protocol.ReportRequest) (int, string) {
+		return http.StatusOK, `{"uninstall":true}`
+	})
+	calls := 0
+	r.Uninstall = func(context.Context) error { calls++; return nil }
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := r.Run(ctx); !errors.Is(err, ErrUninstall) {
+		t.Fatalf("erreur = %v, attendu ErrUninstall", err)
+	}
+	if calls != 1 || len(net.reports) != 1 {
+		t.Errorf("désinstallations = %d, envois = %d, attendu 1 et 1", calls, len(net.reports))
+	}
+}
+
 func TestIntervalIsClamped(t *testing.T) {
 	r, _ := newRunner(t, func(int, protocol.ReportRequest) (int, string) {
 		return http.StatusOK, `{"report_interval_s":2}`

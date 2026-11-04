@@ -94,8 +94,9 @@ func (r *Runner) init() {
 	}
 }
 
-// Run tourne jusqu'à l'annulation du contexte, une révocation (ErrRevoked)
-// ou une mise à jour installée (ErrRestart).
+// Run tourne jusqu'à l'annulation du contexte, une révocation (ErrRevoked),
+// une mise à jour installée (ErrRestart) ou une désinstallation demandée
+// (ErrUninstall).
 func (r *Runner) Run(ctx context.Context) error {
 	r.init()
 	r.Collector.Prime()
@@ -122,7 +123,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		case <-nextReport.C:
 			err := r.Flush(ctx)
 			switch {
-			case errors.Is(err, ErrRevoked), errors.Is(err, ErrRestart):
+			case errors.Is(err, ErrRevoked), errors.Is(err, ErrRestart), errors.Is(err, ErrUninstall):
 				return err
 			case err != nil:
 				backoff = nextBackoff(backoff)
